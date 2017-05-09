@@ -11,7 +11,9 @@ addons:
   apt:
     packages:
       - clang
-      - lib6
+      - libc6
+      - libc6-dev
+      - libstdc++6
       - autoconf
       - automake
       - python3
