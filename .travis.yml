@@ -1,0 +1,25 @@
+language: c++
+sudo: false
+branches:
+  only:
+    - master
+env:
+  - LLVM_VERSION=3.5.0
+  - LLVM_VERSION=3.8.1
+  - LLVM_VERSION=3.9.0
+addons:
+  apt:
+    packages:
+      - clang
+      - lib6
+      - lib6-dev
+      - libstdc++6
+      - autoconf
+      - automake
+      - python3
+      - llvm
+      - llvm-dev
+      - libffi-dev
+before_script:
+  - autoreconf --install && ./configure && make -j6
+script: "make test && make valgrind"
