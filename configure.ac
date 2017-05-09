@@ -1,11 +1,11 @@
 AC_INIT([Nidhugg], [0.2], [carl.leonardsson@gmail.com])
+AM_INIT_AUTOMAKE([-Wall -Werror foreign])
 m4_include([m4/ax_cxx_compile_stdcxx_11.m4])
 m4_include([m4/ax_boost_base.m4])
 m4_include([m4/ax_boost_unit_test_framework.m4])
 m4_include([m4/ax_llvm.m4])
 m4_include([m4/ax_git_commit.m4])
 m4_include([m4/ax_clang.m4])
-AM_INIT_AUTOMAKE([-Wall -Werror foreign])
 # AC_CONFIG_SRCDIR([TSOTraceBuilder.cpp])
 
 AC_PROG_CXX
