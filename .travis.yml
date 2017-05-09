@@ -4,7 +4,6 @@ branches:
   only:
     - master
 env:
-  - LLVM_VERSION=3.5.0
   - LLVM_VERSION=3.8.1
   - LLVM_VERSION=3.9.0
 addons:
@@ -14,14 +13,13 @@ addons:
       - libc6
       - libc6-dev
       - libstdc++6
-      - autoconf-archive
+      - autoconf
       - automake
       - python3
       - llvm
       - llvm-dev
       - libffi-dev
-      - libtool
-      - libboost-test-dev
+      - libboost-test1.55-dev
       - valgrind
 before_script:
   - autoreconf --install
