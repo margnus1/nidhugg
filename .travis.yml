@@ -19,7 +19,7 @@ addons:
       - llvm
       - llvm-dev
       - libffi-dev
-      - libboost-test1.55-dev
+      - libboost-test-dev
       - valgrind
 before_script:
   - autoreconf --install
