@@ -21,5 +21,7 @@ addons:
       - llvm-dev
       - libffi-dev
 before_script:
-  - autoreconf --install && ./configure && make -j6
+  - autoreconf --install
+  - ./configure
+  - make -j6
 script: "make test && make valgrind"
