@@ -14,8 +14,7 @@ addons:
       - libc6
       - libc6-dev
       - libstdc++6
-      - m4
-      - autoconf
+      - autoconf-archive
       - automake
       - python3
       - llvm
