@@ -20,6 +20,7 @@ addons:
       - llvm
       - llvm-dev
       - libffi-dev
+      - libtool
       - libboost-test-dev
       - valgrind
 before_script:
