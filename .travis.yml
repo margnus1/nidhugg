@@ -8,9 +8,9 @@ env:
   - LLVM_VERSION=3.8.1
   - LLVM_VERSION=3.9.0
 addons:
-  sources:
-      - boost-latest
   apt:
+    sources:
+      - boost-latest
     packages:
       - clang
       - libc6
