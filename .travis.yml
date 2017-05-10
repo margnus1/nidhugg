@@ -4,8 +4,8 @@ branches:
   only:
     - master
 env:
-  - LLVM_VERSION=3.6.2
-  - LLVM_VERSION=3.7.0
+  - LLVM_VERSION=3.5.0
+  - LLVM_VERSION=3.6.1
 addons:
   apt:
     sources:
