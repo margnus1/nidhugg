@@ -34,7 +34,7 @@ before_script:
   - autoreconf --install
   - ./configure || cat config.log
   - make -j6
-script: "make test && make valgrind"
+script: "make test && make valtest"
 cache:
   directories:
     - cache
