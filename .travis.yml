@@ -1,0 +1,38 @@
+language: c++
+sudo: false
+branches:
+  only:
+    - master
+env:
+  - LLVM_VERSION=3.5.0
+  - LLVM_VERSION=3.8.1
+  - LLVM_VERSION=3.9.0
+addons:
+  apt:
+    sources:
+      - boost-latest
+    packages:
+      - clang
+      - libc6
+      - libc6-dev
+      - libstdc++6
+      - autoconf
+      - automake
+      - python3
+      - llvm
+      - llvm-dev
+      - libffi-dev
+      - libboost-test1.55-dev
+      - valgrind
+before_script:
+  - ./travis/install_deps.sh
+  - export LLVM_DIR=$PWD/cache/clang+llvm-$LLVM_VERSION
+  - export PATH=$LLVM_DIR/bin:$PATH
+  - export LD_LIBRARY_PATH=$LLVM_DIR/lib
+  - autoreconf --install
+  - ./configure
+  - make -j6
+script: "make test && make valgrind"
+cache:
+  directories:
+    - cache
