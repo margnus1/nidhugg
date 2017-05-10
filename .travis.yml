@@ -4,8 +4,11 @@ branches:
   only:
     - master
 env:
-  - LLVM_VERSION=3.5.0
-  - LLVM_VERSION=3.8.1
+  - LLVM_VERSION=3.3
+  - LLVM_VERSION=3.4
+  - LLVM_VERSION=3.5.2
+  - LLVM_VERSION=3.6.2
+#   - LLVM_VERSION=3.8.1 # bad llvm-config --cxxflags
 addons:
   apt:
     sources:
