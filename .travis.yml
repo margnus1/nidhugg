@@ -4,8 +4,8 @@ branches:
   only:
     - master
 env:
-  - LLVM_VERSION=3.8.1
-  - LLVM_VERSION=3.9.0
+  - LLVM_VERSION=3.6.2
+  - LLVM_VERSION=3.7.0
 addons:
   apt:
     sources:
@@ -30,7 +30,7 @@ before_script:
   - export LD_LIBRARY_PATH=$LLVM_DIR/lib
   - export CPATH=/usr/lib/gcc/x86_64-linux-gnu/4.9/include
   - export CC=gcc-4.9
-  - export CXXXX=g++-4.9
+  - export CXX=g++-4.9
   - autoreconf --install
   - ./configure || cat config.log
   - make -j6
