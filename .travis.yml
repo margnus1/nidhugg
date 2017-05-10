@@ -35,6 +35,7 @@ before_script:
   - ./configure
   - make -j6
 script: "make test && make valgrind"
+after_failure: cat config.log
 cache:
   directories:
     - cache
