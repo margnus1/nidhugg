@@ -14,7 +14,7 @@ addons:
       - clang
       - libc6
       - libc6-dev
-      - libstdc++6-4.8-dev
+      - libstdc++-4.8-dev
       - autoconf
       - automake
       - python3
