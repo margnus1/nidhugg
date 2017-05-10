@@ -1,4 +1,4 @@
-language: c++
+language: C++
 sudo: false
 branches:
   only:
@@ -23,6 +23,7 @@ addons:
       - libffi-dev
       - libboost-test1.55-dev
       - valgrind
+      - libedit-dev # required by LLVM 3.5.0
 before_script:
   - ./travis/install_deps.sh
   - export LLVM_DIR=$PWD/cache/clang+llvm-$LLVM_VERSION
