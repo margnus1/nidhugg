@@ -31,9 +31,10 @@ before_script:
   - export CPATH=/usr/lib/gcc/x86_64-linux-gnu/4.9/include
   - export CC=gcc-4.9
   - export CXX=g++-4.9
+  - export MAKEFLAGS=-j6
   - autoreconf --install
-  - ./configure || cat config.log
-  - make -j6
+  - ./configure --enable-silent-rules || cat config.log
+  - make
 script: "make test && make valtest"
 cache:
   directories:
