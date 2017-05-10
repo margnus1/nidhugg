@@ -4,9 +4,12 @@ branches:
   only:
     - master
 env:
+  - LLVM_VERSION=3.5.0
   - LLVM_VERSION=3.8.1
   - LLVM_VERSION=3.9.0
 addons:
+  sources:
+      - boost-latest
   apt:
     packages:
       - clang
@@ -19,10 +22,17 @@ addons:
       - llvm
       - llvm-dev
       - libffi-dev
-      - libboost-test-dev
+      - libboost-test1.55-dev
       - valgrind
 before_script:
+  - ./travis/install_deps.sh
+  - export LLVM_DIR=$PWD/cache/clang+llvm-$LLVM_VERSION
+  - export PATH=$LLVM_DIR/bin:$PATH
+  - export LD_LIBRARY_PATH=$LLVM_DIR/lib
   - autoreconf --install
   - ./configure
   - make -j6
 script: "make test && make valgrind"
+cache:
+  directories:
+    - cache
