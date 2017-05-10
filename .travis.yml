@@ -12,14 +12,13 @@ addons:
       - boost-latest
       - ubuntu-toolchain-r-test
     packages:
-      - clang
+      - g++-4.8
       - libc6
       - libc6-dev
       - libstdc++-4.8-dev
       - autoconf
       - automake
       - python3
-      - llvm
       - llvm-dev
       - libffi-dev
       - libboost-test1.55-dev
