@@ -4,7 +4,6 @@ branches:
   only:
     - master
 env:
-  - LLVM_VERSION=3.5.0
   - LLVM_VERSION=3.8.1
   - LLVM_VERSION=3.9.0
 addons:
@@ -15,7 +14,7 @@ addons:
       - clang
       - libc6
       - libc6-dev
-      - libstdc++6-4.9
+      - libstdc++6
       - autoconf
       - automake
       - python3
