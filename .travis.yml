@@ -32,10 +32,9 @@ before_script:
   - export CC=gcc-4.9
   - export CXX=g++-4.9
   - autoreconf --install
-  - ./configure
+  - ./configure || cat config.log
   - make -j6
 script: "make test && make valgrind"
-after_failure: cat config.log
 cache:
   directories:
     - cache
