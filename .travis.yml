@@ -8,7 +8,7 @@ env:
   - LLVM_VERSION=3.4
   - LLVM_VERSION=3.5.2
   - LLVM_VERSION=3.6.2
-#   - LLVM_VERSION=3.8.1 # bad llvm-config --cxxflags
+  - LLVM_VERSION=3.8.1 # bad llvm-config --cxxflags
 addons:
   apt:
     sources:
@@ -35,6 +35,7 @@ before_script:
   - export CC=gcc-4.9
   - export CXX=g++-4.9
   - export MAKEFLAGS=-j6
+  - export CXXFLAGS=-Wno-unknown-warning-option
   - autoreconf --install
   - ./configure --enable-silent-rules || cat config.log
   - make
