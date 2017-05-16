@@ -938,19 +938,6 @@ void TSOTraceBuilder::race_detect(const ReversibleRace &race){
   VecSet<IPid> isleep = sleep_set_at(i);
 
   VClock<IPid> mutex_clock;
-  if (race.kind == ReversibleRace::LOCK) {
-    /* Find last event of p before this mutex probe */
-    IPid p = race.second_process.get_pid();
-    int last = race.second_event-1;
-    do {
-      if (prefix[last].iid.get_pid() == p) {
-        mutex_clock = prefix[last].clock;
-        break;
-      }
-    } while(last--);
-    /* Recompute the clock of this mutex_lock_fail */
-    ++mutex_clock[p];
-  }
 
   /* candidates is a map from IPid p to event index i such that the
    * IID (p,i) identifies an event between prefix[i] (exclusive) and
@@ -965,19 +952,34 @@ void TSOTraceBuilder::race_detect(const ReversibleRace &race){
   Branch cand = {-1,0};
   const VClock<IPid> &iclock = prefix[i].clock;
   for(int k = i+1; k <= j; ++k){
-    const IID<IPid> &iid = race.kind == ReversibleRace::LOCK && k == j
+    const IID<IPid> &iid = k == j && race.kind == ReversibleRace::LOCK
       ? race.second_process : prefix[k].iid;
     IPid p = iid.get_pid();
     /* Did we already cover p? */
     if(p < int(candidates.size()) && 0 <= candidates[p]) continue;
-    const VClock<IPid> &pclock = race.kind == ReversibleRace::LOCK && k == j
-           ? mutex_clock : prefix[k].clock;
+    const VClock<IPid> *pclock = &prefix[k].clock;
+    if (k == j && race.kind == ReversibleRace::LOCK) {
+      /* Compute the clock of the locking process (event k in prefix is
+       * something unrelated since this is a lock probe) */
+      /* Find last event of p before this mutex probe */
+      IPid p = race.second_process.get_pid();
+      int last = race.second_event-1;
+      do {
+        if (prefix[last].iid.get_pid() == p) {
+          mutex_clock = prefix[last].clock;
+          break;
+        }
+      } while(last--);
+      /* Recompute the clock of this mutex_lock_fail */
+      ++mutex_clock[p];
+      pclock = &mutex_clock;
+    }
     /* Is p after prefix[i]? */
-    if(k != j && iclock.leq(pclock)) continue;
+    if(k != j && iclock.leq(*pclock)) continue;
     /* Is p after some other candidate? */
     bool is_after = false;
     for(int q = 0; !is_after && q < int(candidates.size()); ++q){
-      if(0 <= candidates[q] && candidates[q] <= pclock[q]){
+      if(0 <= candidates[q] && candidates[q] <= (*pclock)[q]){
         is_after = true;
       }
     }
