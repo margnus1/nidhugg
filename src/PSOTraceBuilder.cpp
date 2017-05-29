@@ -110,26 +110,47 @@ bool PSOTraceBuilder::schedule(int *proc, int *aux, int *alt, bool *dryrun){
 
   /* Find an available thread (auxiliary or real).
    *
-   * Prioritize auxiliary before real, and older before younger
-   * threads.
+   * Prioritize auxiliary before real threads.
    */
   IPid p = -1;
+  auto schedulable = [this](int pid) {
+    return threads[pid].available && !threads[pid].sleeping &&
+    (conf.max_search_depth < 0 || threads[pid].clock[pid] < conf.max_search_depth);
+  };
   for(IPid p_aux : available_auxs){
-    if(threads[p_aux].available && !threads[p_aux].sleeping &&
-       (conf.max_search_depth < 0 || threads[p_aux].clock[p_aux] < conf.max_search_depth) &&
-       is_aux_at_head(p_aux)){
+    if(schedulable(p_aux) && is_aux_at_head(p_aux)){
       p = p_aux;
       *aux = threads[p].cpid.get_aux_index();
       break;
     }
   }
   if(p < 0){
-    for(IPid p_real : available_threads){
-      if(threads[p_real].available && !threads[p_real].sleeping &&
-         (conf.max_search_depth < 0 || threads[p_real].clock[p_real] < conf.max_search_depth)){
-        p = p_real;
-        *aux = -1;
-        break;
+    if (conf.scheduling_algorithm == Configuration::ROUND_ROBIN) {
+      /* Schedule threads in round-robin fashon. */
+      unsigned last = 0;
+      if (prefix.size()){
+        last = prefix[prefix_idx-1].iid.get_pid();
+      }
+
+      const unsigned sz = threads.size();
+      const unsigned end = last + sz;
+      for (unsigned pi = last; pi < end; ++pi) {
+        const unsigned p_real = pi % sz;
+
+        if(schedulable(p_real)){
+          p = p_real;
+          *aux = -1;
+          break;
+        }
+      }
+    } else {
+      /* Prioritize older before younger threads. */
+      for(IPid p_real : available_threads){
+        if(schedulable(p_real)){
+          p = p_real;
+          *aux = -1;
+          break;
+        }
       }
     }
   }

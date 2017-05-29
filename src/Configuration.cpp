@@ -62,6 +62,16 @@ cl_dpor_algorithm(llvm::cl::NotHidden, llvm::cl::init(Configuration::SOURCE),
 #endif
                                  ));
 
+static llvm::cl::opt<Configuration::SchedulingAlgorithm>
+cl_scheduling_algorithm(llvm::cl::NotHidden, llvm::cl::init(Configuration::ROUND_ROBIN),
+                        llvm::cl::desc("Select DPOR algorithm"),
+                        llvm::cl::values(clEnumValN(Configuration::ROUND_ROBIN,"round-robin","Round Robin (default)"),
+                                         clEnumValN(Configuration::OLDEST_FIRST,"oldest-first","Oldest first")
+#ifdef LLVM_CL_VALUES_USES_SENTINEL
+                                        ,clEnumValEnd
+#endif
+                                         ));
+
 static llvm::cl::opt<bool> cl_check_robustness("robustness",llvm::cl::NotHidden,
                                                llvm::cl::desc("Check for robustness as a correctness criterion."));
 
@@ -91,13 +101,14 @@ static llvm::cl::list<std::string> cl_extfun_no_race("extfun-no-race",llvm::cl::
 
 const std::set<std::string> &Configuration::commandline_opts(){
   static std::set<std::string> opts = {
-    "dpor-explore-all",
+    "explore-all",
     "extfun-no-race",
     "malloc-may-fail",
     "disable-mutex-init-requirement",
     "max-search-depth",
     "sc","tso","pso","power","arm",
     "source","optimal",
+    "round-robin","oldest-first",
     "robustness",
     "no-spin-assume",
     "unroll",
@@ -124,6 +135,7 @@ void Configuration::assign_by_commandline(){
   transform_loop_unroll = cl_transform_loop_unroll;
   print_progress = cl_print_progress || cl_print_progress_estimate;
   print_progress_estimate = cl_print_progress_estimate;
+  scheduling_algorithm = cl_scheduling_algorithm;
 }
 
 void Configuration::check_commandline(){

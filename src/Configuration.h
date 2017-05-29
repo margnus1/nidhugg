@@ -46,6 +46,10 @@ public:
     SOURCE,
     OPTIMAL
   };
+  enum SchedulingAlgorithm{
+    OLDEST_FIRST,
+    ROUND_ROBIN
+  };
   /* Assign default values to all configuration parameters. */
   Configuration(){
     explore_all_traces = false;
@@ -54,6 +58,7 @@ public:
     max_search_depth = -1;
     memory_model = MM_UNDEF;
     dpor_algorithm = SOURCE;
+    scheduling_algorithm = ROUND_ROBIN;
     extfun_no_fence = {
       "pthread_self",
       "malloc",
@@ -124,6 +129,8 @@ public:
   MemoryModel memory_model;
   /* Which DPOR algorithm should be used? */
   DPORAlgorithm dpor_algorithm;
+  /* Which scheduling algorithm should be used? */
+  SchedulingAlgorithm scheduling_algorithm;
   /* A set of names of external functions that should be assumed to
    * not have fencing behavior. Notice however that the function
    * itself will still execute atomically, which may cause behaviors
