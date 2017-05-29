@@ -64,6 +64,16 @@ cl_dpor_algorithm(llvm::cl::NotHidden, llvm::cl::init(Configuration::SOURCE),
 #endif
                                  ));
 
+static llvm::cl::opt<Configuration::SchedulingAlgorithm>
+cl_scheduling_algorithm(llvm::cl::NotHidden, llvm::cl::init(Configuration::ROUND_ROBIN),
+                        llvm::cl::desc("Select DPOR algorithm"),
+                        llvm::cl::values(clEnumValN(Configuration::ROUND_ROBIN,"round-robin","Round Robin (default)"),
+                                         clEnumValN(Configuration::OLDEST_FIRST,"oldest-first","Oldest first")
+#ifdef LLVM_CL_VALUES_USES_SENTINEL
+                                        ,clEnumValEnd
+#endif
+                                         ));
+
 static llvm::cl::opt<bool> cl_check_robustness("robustness",llvm::cl::NotHidden,
                                                llvm::cl::desc("Check for robustness as a correctness criterion."));
 
@@ -111,13 +121,14 @@ static llvm::cl::opt<std::string> cl_dump_spec
 
 const std::set<std::string> &Configuration::commandline_opts(){
   static std::set<std::string> opts = {
-    "dpor-explore-all",
+    "explore-all",
     "extfun-no-race",
     "malloc-may-fail",
     "disable-mutex-init-requirement",
     "max-search-depth",
     "sc","tso","pso","power","arm",
     "source","optimal",
+    "round-robin","oldest-first",
     "robustness",
     "no-spin-assume",
     "unroll",
@@ -154,6 +165,7 @@ void Configuration::assign_by_commandline(){
   ee_store_trace           |= !cl_dump_tree.empty();
   spec_dump_file = cl_dump_spec;
   debug_collect_all_traces |= !cl_dump_spec.empty();
+  scheduling_algorithm = cl_scheduling_algorithm;
   argv.resize(1);
   argv[0] = get_default_program_name();
   for(std::string a : cl_program_arguments){

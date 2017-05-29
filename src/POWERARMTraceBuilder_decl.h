@@ -816,6 +816,8 @@ namespace PATB_impl{
     /* Update the value of addr_known_prefix in threads[proc].
      */
     void update_addr_known_prefix(int proc);
+    /* Helper to schedule(). Attempts to schedule proc. */
+    bool try_schedule_one(unsigned proc, IID<int> *iid, std::vector<MBlock> *values);
     /* Returns true iff evt is neither committed nor sleeping and
      * there is no other uncommitted event by the same thread which
      * necessarily is cb-before evt.

@@ -119,36 +119,59 @@ bool TSOTraceBuilder::schedule(int *proc, int *aux, int *alt, bool *dryrun){
   ++prefix_idx;
   assert(prefix_idx == int(prefix.len()));
 
-  /* Find an available thread (auxiliary or real).
-   *
-   * Prioritize auxiliary before real, and older before younger
-   * threads.
-   */
-  const unsigned sz = threads.size();
-  unsigned p;
-  for(p = 1; p < sz; p += 2){ // Loop through auxiliary threads
-    if(threads[p].available && !threads[p].sleeping &&
-       (conf.max_search_depth < 0 || threads[p].clock[p] < conf.max_search_depth)){
-      ++threads[p].clock[p];
-      prefix.push(Branch(IPid(p)),
-                  Event(IID<IPid>(IPid(p),threads[p].clock[p]),
-                        threads[p].clock));
-      *proc = p/2;
-      *aux = 0;
-      return true;
+  /* Find an available thread (auxiliary or real). */
+  if (conf.scheduling_algorithm == Configuration::ROUND_ROBIN) {
+    /* Schedule threads in round-robin fashon. */
+    unsigned last = 0;
+    if (prefix.len()) {
+      last = prefix[prefix_idx-1].iid.get_pid();
     }
-  }
 
-  for(p = 0; p < sz; p += 2){ // Loop through real threads
-    if(threads[p].available && !threads[p].sleeping &&
-       (conf.max_search_depth < 0 || threads[p].clock[p] < conf.max_search_depth)){
-      ++threads[p].clock[p];
-      prefix.push(Branch(IPid(p)),
-                  Event(IID<IPid>(IPid(p),threads[p].clock[p]),
-                        threads[p].clock));
-      *proc = p/2;
-      *aux = -1;
-      return true;
+    const unsigned sz = threads.size();
+    for (unsigned pi = last; pi < last + sz; ++pi) {
+      const unsigned p = pi % sz;
+
+      if(threads[p].available && !threads[p].sleeping &&
+         (conf.max_search_depth < 0 || threads[p].clock[p] < conf.max_search_depth)){
+        ++threads[p].clock[p];
+        prefix.push(Branch(IPid(p)),
+                    Event(IID<IPid>(IPid(p),threads[p].clock[p]),
+                          threads[p].clock));
+        *proc = p/2;
+        *aux = (p%2)-1;
+        return true;
+      }
+    }
+  } else {
+    /* Prioritize auxiliary before real, and older before younger
+     * threads.
+     */
+    const unsigned sz = threads.size();
+    unsigned p;
+    for(p = 1; p < sz; p += 2){ // Loop through auxiliary threads
+      if(threads[p].available && !threads[p].sleeping &&
+         (conf.max_search_depth < 0 || threads[p].clock[p] < conf.max_search_depth)){
+        ++threads[p].clock[p];
+        prefix.push(Branch(IPid(p)),
+                    Event(IID<IPid>(IPid(p),threads[p].clock[p]),
+                          threads[p].clock));
+        *proc = p/2;
+        *aux = 0;
+        return true;
+      }
+    }
+
+    for(p = 0; p < sz; p += 2){ // Loop through real threads
+      if(threads[p].available && !threads[p].sleeping &&
+         (conf.max_search_depth < 0 || threads[p].clock[p] < conf.max_search_depth)){
+        ++threads[p].clock[p];
+        prefix.push(Branch(IPid(p)),
+                    Event(IID<IPid>(IPid(p),threads[p].clock[p]),
+                          threads[p].clock));
+        *proc = p/2;
+        *aux = -1;
+        return true;
+      }
     }
   }
 

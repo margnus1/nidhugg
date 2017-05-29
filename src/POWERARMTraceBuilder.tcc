@@ -364,6 +364,29 @@ namespace PATB_impl{
   }
 
   template<MemoryModel MemMod,CB_T CB,class Event>
+  bool TB<MemMod,CB,Event>::try_schedule_one(unsigned proc, IID<int> *iid, std::vector<MBlock> *values){
+    const int fch_count = threads[proc].fch_count;
+    for(int idx = threads[proc].committed_prefix; idx < fch_count; ++idx){
+      if(committable(fch[proc][idx])){
+        if(commit(fch[proc][idx],values,false)){
+          *iid = IID<int>(proc,idx+1);
+          while(threads[proc].committed_prefix < threads[proc].fch_count &&
+                fch[proc][threads[proc].committed_prefix].committed){
+            ++threads[proc].committed_prefix;
+          }
+          prefix.push_back(*iid);
+          ++sched_count;
+          return true;
+        }else{
+          // The event is blocked. Do nothing, instead execute the
+          // next committable event.
+        }
+      }
+    }
+    return false;
+  }
+
+  template<MemoryModel MemMod,CB_T CB,class Event>
   bool TB<MemMod,CB,Event>::schedule(IID<int> *iid, std::vector<MBlock> *values){
     if(is_aborted) return false;
     /* Schedule */
@@ -384,23 +407,23 @@ namespace PATB_impl{
       return true;
     }else{
       /* Find something new to schedule */
-      for(unsigned proc = 0; proc < threads.size(); ++proc){
-        const int fch_count = threads[proc].fch_count;
-        for(int idx = threads[proc].committed_prefix; idx < fch_count; ++idx){
-          if(committable(fch[proc][idx])){
-            if(commit(fch[proc][idx],values,false)){
-              *iid = IID<int>(proc,idx+1);
-              while(threads[proc].committed_prefix < threads[proc].fch_count &&
-                    fch[proc][threads[proc].committed_prefix].committed){
-                ++threads[proc].committed_prefix;
-              }
-              prefix.push_back(*iid);
-              ++sched_count;
-              return true;
-            }else{
-              // The event is blocked. Do nothing, instead execute the
-              // next committable event.
-            }
+      if (conf.scheduling_algorithm == Configuration::ROUND_ROBIN){
+        assert(sched_count == int(prefix.size()));
+        unsigned last = 0;
+        if (prefix.size()){
+          last = prefix.back().get_pid();
+        }
+
+        const unsigned sz = threads.size();
+        for (unsigned pi = last; pi < last + sz; ++pi) {
+          if (try_schedule_one(pi % sz, iid, values)){
+            return true;
+          }
+        }
+      }else{
+        for(unsigned proc = 0; proc < threads.size(); ++proc){
+          if (try_schedule_one(proc, iid, values)){
+            return true;
           }
         }
       }
