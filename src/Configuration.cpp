@@ -119,6 +119,10 @@ static llvm::cl::opt<std::string> cl_dump_spec
  llvm::cl::value_desc("FILE"),
  llvm::cl::desc("Write minimal trace_set_spec to FILE."));
 
+static llvm::cl::opt<bool> cl_debug_print_on_reset
+("debug-print-on-reset",llvm::cl::Hidden,
+ llvm::cl::desc("Print debug info after exploring each trace."));
+
 const std::set<std::string> &Configuration::commandline_opts(){
   static std::set<std::string> opts = {
     "explore-all",
@@ -166,6 +170,7 @@ void Configuration::assign_by_commandline(){
   spec_dump_file = cl_dump_spec;
   debug_collect_all_traces |= !cl_dump_spec.empty();
   scheduling_algorithm = cl_scheduling_algorithm;
+  debug_print_on_reset = cl_debug_print_on_reset;
   argv.resize(1);
   argv[0] = get_default_program_name();
   for(std::string a : cl_program_arguments){
