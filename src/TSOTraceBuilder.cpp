@@ -424,7 +424,7 @@ void TSOTraceBuilder::debug_print() const {
                  << lines[i] << "\n";
   }
   for (unsigned i = prefix.len(); i < lines.size(); ++i){
-    llvm::dbgs() << rpad("", iid_offs + clock_offs) << lines[i] << "\n";
+    llvm::dbgs() << std::string(2+iid_offs + 1+clock_offs, ' ') << lines[i] << "\n";
   }
   if(errors.size()){
     llvm::dbgs() << "Errors:\n";
