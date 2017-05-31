@@ -128,9 +128,7 @@ bool TSOTraceBuilder::schedule(int *proc, int *aux, int *alt, bool *dryrun){
     }
 
     const unsigned sz = threads.size();
-    unsigned pi = last;
-    const unsigned end = pi + sz;
-    for (; pi < end; ++pi) {
+    for (unsigned pi = last; pi < last + sz; ++pi) {
       const unsigned p = pi % sz;
 
       if(threads[p].available && !threads[p].sleeping &&

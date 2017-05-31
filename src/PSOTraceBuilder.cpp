@@ -133,8 +133,7 @@ bool PSOTraceBuilder::schedule(int *proc, int *aux, int *alt, bool *dryrun){
       }
 
       const unsigned sz = threads.size();
-      const unsigned end = last + sz;
-      for (unsigned pi = last; pi < end; ++pi) {
+      for (unsigned pi = last; pi < last + sz; ++pi) {
         const unsigned p_real = pi % sz;
 
         if(schedulable(p_real)){

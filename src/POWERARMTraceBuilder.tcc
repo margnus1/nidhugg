@@ -406,16 +406,15 @@ namespace PATB_impl{
       return true;
     }else{
       /* Find something new to schedule */
-      if (conf.scheduling_algorithm == Configuration::ROUND_ROBIN) {
-        assert(sched_count == prefix.size());
+      if (conf.scheduling_algorithm == Configuration::ROUND_ROBIN){
+        assert(sched_count == int(prefix.size()));
         unsigned last = 0;
         if (prefix.size()){
-          last = prefix[sched_count-1].get_pid();
+          last = prefix.back().get_pid();
         }
 
         const unsigned sz = threads.size();
-        const unsigned end = last + sz;
-        for (unsigned pi = last; pi < end; ++pi) {
+        for (unsigned pi = last; pi < last + sz; ++pi) {
           if (try_schedule_one(pi % sz, iid, values)){
             return true;
           }
