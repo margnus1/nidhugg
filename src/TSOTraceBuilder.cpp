@@ -425,6 +425,9 @@ void TSOTraceBuilder::debug_print() const {
                  << " " << rpad(prefix[i].clock.to_string(),clock_offs)
                  << lines[i] << "\n";
   }
+  for (unsigned i = prefix.len(); i < lines.size(); ++i){
+    llvm::dbgs() << rpad("", iid_offs + clock_offs) << lines[i] << "\n";
+  }
   if(errors.size()){
     llvm::dbgs() << "Errors:\n";
     for(unsigned i = 0; i < errors.size(); ++i){
