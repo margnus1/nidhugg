@@ -55,6 +55,7 @@ bool TSOTraceBuilder::schedule(int *proc, int *aux, int *alt, bool *dryrun){
       return true;
     }else if(prefix_idx + 1 == int(prefix.len()) && prefix.lastnode().size() == 0){
       /* We are done replaying. Continue below... */
+      assert(prefix_idx < 0 || curev().sym.size() == sym_idx);
       replay = false;
       assert(conf.dpor_algorithm != Configuration::OPTIMAL
             || std::all_of(threads.cbegin(), threads.cend(),
@@ -75,7 +76,9 @@ bool TSOTraceBuilder::schedule(int *proc, int *aux, int *alt, bool *dryrun){
       return true;
     }else{
       /* Go to the next event. */
+      assert(prefix_idx < 0 || curev().sym.size() == sym_idx);
       dry_sleepers = 0;
+      sym_idx = 0;
       ++prefix_idx;
       IPid pid;
       if (prefix_idx < int(prefix.len())) {
@@ -100,6 +103,8 @@ bool TSOTraceBuilder::schedule(int *proc, int *aux, int *alt, bool *dryrun){
   assert(!replay);
   /* Create a new Event */
 
+  assert(prefix_idx < 0 || !!curev().sym.size() == curev().may_conflict);
+
   /* Should we merge the last two events? */
   if(prefix.len() > 1 &&
      prefix[prefix.len()-1].iid.get_pid()
@@ -116,6 +121,7 @@ bool TSOTraceBuilder::schedule(int *proc, int *aux, int *alt, bool *dryrun){
   }
 
   /* Create a new Event */
+  sym_idx = 0;
   ++prefix_idx;
   assert(prefix_idx == int(prefix.len()));
 
@@ -471,6 +477,7 @@ void TSOTraceBuilder::atomic_store(const ConstMRef &ml){
   }
   IPid ipid = curev().iid.get_pid();
   curev().may_conflict = true;
+  record_symbolic(SymEv::Store(ml));
   bool is_update = ipid % 2;
 
   IPid uipid = ipid; // ID of the thread changing the memory
@@ -545,6 +552,7 @@ void TSOTraceBuilder::load(const ConstMRef &ml){
     return;
   }
   curev().may_conflict = true;
+  record_symbolic(SymEv::Load(ml));
   IPid ipid = curev().iid.get_pid();
 
   /* Check if this is a ROWE */
@@ -596,6 +604,7 @@ void TSOTraceBuilder::full_memory_conflict(){
     return;
   }
   curev().may_conflict = true;
+  record_symbolic(SymEv::Fullmem());
 
   /* See all pervious memory accesses */
   VecSet<int> seen_accesses;
@@ -652,6 +661,7 @@ void TSOTraceBuilder::mutex_lock(const ConstMRef &ml){
   }
   assert(mutexes.count(ml.ref));
   curev().may_conflict = true;
+  record_symbolic(SymEv::MLock(ml));
   wakeup(Access::W,ml.ref);
 
   Mutex &mutex = mutexes[ml.ref];
@@ -708,6 +718,7 @@ void TSOTraceBuilder::mutex_trylock(const ConstMRef &ml){
   }
   assert(mutexes.count(ml.ref));
   curev().may_conflict = true;
+  record_symbolic(SymEv::MLock(ml));
   wakeup(Access::W,ml.ref);
   Mutex &mutex = mutexes[ml.ref];
   see_events({mutex.last_access,last_full_memory_conflict});
@@ -734,6 +745,7 @@ void TSOTraceBuilder::mutex_unlock(const ConstMRef &ml){
   assert(mutexes.count(ml.ref));
   Mutex &mutex = mutexes[ml.ref];
   curev().may_conflict = true;
+  record_symbolic(SymEv::MUnlock(ml));
   wakeup(Access::W,ml.ref);
   assert(0 <= mutex.last_access);
 
@@ -753,6 +765,7 @@ void TSOTraceBuilder::mutex_init(const ConstMRef &ml){
   fence();
   assert(mutexes.count(ml.ref) == 0);
   curev().may_conflict = true;
+  record_symbolic(SymEv::MInit(ml));
   mutexes[ml.ref] = Mutex(prefix_idx);
   see_events({last_full_memory_conflict});
 }
@@ -773,6 +786,7 @@ void TSOTraceBuilder::mutex_destroy(const ConstMRef &ml){
   assert(mutexes.count(ml.ref));
   Mutex &mutex = mutexes[ml.ref];
   curev().may_conflict = true;
+  record_symbolic(SymEv::MDelete(ml));
   wakeup(Access::W,ml.ref);
 
   see_events({mutex.last_access,last_full_memory_conflict});
@@ -794,6 +808,7 @@ bool TSOTraceBuilder::cond_init(const ConstMRef &ml){
     return false;
   }
   curev().may_conflict = true;
+  record_symbolic(SymEv::CInit(ml));
   cond_vars[ml.ref] = CondVar(prefix_idx);
   see_events({last_full_memory_conflict});
   return true;
@@ -809,6 +824,7 @@ bool TSOTraceBuilder::cond_signal(const ConstMRef &ml){
   }
   fence();
   curev().may_conflict = true;
+  record_symbolic(SymEv::CSignal(ml));
   wakeup(Access::W,ml.ref);
 
   auto it = cond_vars.find(ml.ref);
@@ -860,6 +876,7 @@ bool TSOTraceBuilder::cond_broadcast(const ConstMRef &ml){
   }
   fence();
   curev().may_conflict = true;
+  record_symbolic(SymEv::CBrdcst(ml));
   wakeup(Access::W,ml.ref);
 
   auto it = cond_vars.find(ml.ref);
@@ -916,6 +933,7 @@ bool TSOTraceBuilder::cond_wait(const ConstMRef &cond_ml, const ConstMRef &mutex
   }
   fence();
   curev().may_conflict = true;
+  record_symbolic(SymEv::CWait(cond_ml,mutex_ml));
   wakeup(Access::R,cond_ml.ref);
 
   IPid pid = curev().iid.get_pid();
@@ -946,6 +964,7 @@ int TSOTraceBuilder::cond_destroy(const ConstMRef &ml){
   int err = (EBUSY == 1) ? 2 : 1; // Chose an error value different from EBUSY
 
   curev().may_conflict = true;
+  record_symbolic(SymEv::CDelete(ml));
   wakeup(Access::W,ml.ref);
 
   auto it = cond_vars.find(ml.ref);
@@ -965,6 +984,7 @@ int TSOTraceBuilder::cond_destroy(const ConstMRef &ml){
 
 void TSOTraceBuilder::register_alternatives(int alt_count){
   curev().may_conflict = true;
+  record_symbolic(SymEv::Nondet());
   for(int i = curbranch().alt+1; i < alt_count; ++i){
     prefix.parent_at(prefix.len()-1)
       .put_child(Branch({curev().iid.get_pid(),i}));
@@ -1024,6 +1044,28 @@ void TSOTraceBuilder::add_lock_race(const Mutex &m, int event){
 
   reversible_races.push_back
     (ReversibleRace::Lock(event,prefix_idx,curev().iid,&m));
+}
+
+void TSOTraceBuilder::record_symbolic(SymEv event){
+  assert(!dryrun);
+  if (sym_idx == curev().sym.size()) {
+    // assert(!replay);
+    if (replay) {
+      if (conf.debug_print_on_reset)
+      llvm::dbgs() << "New symbolic event " << event <<
+        " after " << curev().sym.size() << " expected\n";
+      // assert(false && "");
+      // abort();
+    }
+    /* New event */
+    curev().sym.push_back(event);
+    sym_idx++;
+  } else {
+    assert(replay);
+    /* Replay. SymEv::set() asserts that this is the same event as last time. */
+    assert(sym_idx < curev().sym.size());
+    curev().sym[sym_idx++].set(event);
+  }
 }
 
 bool TSOTraceBuilder::are_events_racing
