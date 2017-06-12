@@ -816,7 +816,7 @@ bool TSOTraceBuilder::cond_signal(const ConstMRef &ml){
   }
   fence();
   curev().may_conflict = true;
-  record_symbolic(SymEv::CBrdcst(ml));
+  record_symbolic(SymEv::CSignal(ml));
   wakeup(Access::W,ml.ref);
 
   auto it = cond_vars.find(ml.ref);
@@ -868,7 +868,7 @@ bool TSOTraceBuilder::cond_broadcast(const ConstMRef &ml){
   }
   fence();
   curev().may_conflict = true;
-  record_symbolic(SymEv::CSignal(ml));
+  record_symbolic(SymEv::CBrdcst(ml));
   wakeup(Access::W,ml.ref);
 
   auto it = cond_vars.find(ml.ref);
