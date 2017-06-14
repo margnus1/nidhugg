@@ -455,6 +455,8 @@ void TSOTraceBuilder::spawn(){
   threads.push_back(Thread(child_cpid,threads[parent_ipid].clock));
   threads.push_back(Thread(CPS.new_aux(child_cpid),threads[parent_ipid].clock));
   threads.back().available = false; // Empty store buffer
+  curev().may_conflict = true;
+  record_symbolic(SymEv::Spawn(threads.size() / 2 - 1));
 }
 
 void TSOTraceBuilder::store(const ConstMRef &ml){
@@ -639,6 +641,8 @@ void TSOTraceBuilder::fence(){
 
 void TSOTraceBuilder::join(int tgt_proc){
   if(dryrun) return;
+  curev().may_conflict = true;
+  record_symbolic(SymEv::Join(tgt_proc));
   IPid ipid = curev().iid.get_pid();
   curev().clock += threads[tgt_proc*2].clock;
   threads[ipid].clock += threads[tgt_proc*2].clock;
@@ -933,7 +937,7 @@ bool TSOTraceBuilder::cond_wait(const ConstMRef &cond_ml, const ConstMRef &mutex
   }
   fence();
   curev().may_conflict = true;
-  record_symbolic(SymEv::CWait(cond_ml,mutex_ml));
+  record_symbolic(SymEv::CWait(cond_ml));
   wakeup(Access::R,cond_ml.ref);
 
   IPid pid = curev().iid.get_pid();
@@ -947,6 +951,17 @@ bool TSOTraceBuilder::cond_wait(const ConstMRef &cond_ml, const ConstMRef &mutex
   threads[pid].available = false;
 
   see_events({last_full_memory_conflict,it->second.last_signal});
+
+  return true;
+}
+
+bool TSOTraceBuilder::cond_awake(const ConstMRef &cond_ml, const ConstMRef &mutex_ml){
+  mutex_lock(mutex_ml);
+  if(dryrun){
+    return true;
+  }
+  curev().may_conflict = true;
+  record_symbolic(SymEv::CAwake(cond_ml));
 
   return true;
 }
@@ -1068,7 +1083,9 @@ void TSOTraceBuilder::record_symbolic(SymEv event){
   }
 }
 
-static bool do_events_conflict_(const SymEv &fst, const SymEv &snd) {
+bool TSOTraceBuilder::do_symevs_conflict
+(IPid fst_pid, const SymEv &fst,
+ IPid snd_pid, const SymEv &snd) const {
   if (fst.kind == SymEv::NONDET || snd.kind == SymEv::NONDET) return false;
   if (fst.kind == SymEv::FULLMEM || snd.kind == SymEv::FULLMEM) return true;
   if (fst.kind == SymEv::LOAD && snd.kind == SymEv::LOAD) return false;
@@ -1077,21 +1094,6 @@ static bool do_events_conflict_(const SymEv &fst, const SymEv &snd) {
   if (fst.has_addr()) {
     if (snd.has_addr()) {
       return fst.addr().overlaps(snd.addr());
-    } else if (snd.has_apair()) {
-      return fst.addr().overlaps(snd.apair1())
-        || fst.addr().overlaps(snd.apair2());
-    } else {
-      return false;
-    }
-  } else if (fst.has_apair()) {
-    if (snd.has_addr()) {
-      return fst.apair1().overlaps(snd.addr())
-        || fst.apair1().overlaps(snd.addr());
-    } else if (snd.has_apair()) {
-      return fst.apair1().overlaps(snd.apair1())
-        || fst.apair1().overlaps(snd.apair2())
-        || fst.apair2().overlaps(snd.apair1())
-        || fst.apair2().overlaps(snd.apair2());
     } else {
       return false;
     }
@@ -1101,13 +1103,19 @@ static bool do_events_conflict_(const SymEv &fst, const SymEv &snd) {
 }
 
 bool TSOTraceBuilder::do_events_conflict
-(const Event::sym_ty &fst, const Event::sym_ty &snd) const{
+(IPid fst_pid, const Event::sym_ty &fst,
+ IPid snd_pid, const Event::sym_ty &snd) const{
+  if (fst_pid == snd_pid) return true;
   for (const SymEv &fe : fst) {
+    if (fe.has_num() && fe.num() == (snd_pid / 2)) return true;
     for (const SymEv &se : snd) {
-      if (do_events_conflict_(fe, se)) {
+      if (do_symevs_conflict(fst_pid, fe, snd_pid, se)) {
         return true;
       }
     }
+  }
+  for (const SymEv &se : snd) {
+    if (se.has_num() && se.num() == (fst_pid / 2)) return true;
   }
   return false;
 }
