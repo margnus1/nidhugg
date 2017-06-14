@@ -1370,9 +1370,6 @@ void TSOTraceBuilder::race_detect_optimal(const ReversibleRace &race){
     }
   }
 
-    }
-  }
-
   /* Do insertion into the wakeup tree */
   WakeupTreeRef<Branch> node = prefix.parent_at(i);
   while(1) {
