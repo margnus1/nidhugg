@@ -69,6 +69,10 @@ bool TSOTraceBuilder::schedule(int *proc, int *aux, int *alt, bool *dryrun){
        * being put to sleep.
        */
       IPid pid = prefix[prefix_idx+1].sleep[dry_sleepers];
+      prefix[prefix_idx+1].sleep_evs.resize
+        (prefix[prefix_idx+1].sleep.size());
+      threads[pid].sleep_sym = &prefix[prefix_idx+1].sleep_evs[dry_sleepers];
+      threads[pid].sleep_sym->clear();
       ++dry_sleepers;
       threads[pid].sleeping = true;
       *proc = pid/2;
@@ -538,6 +542,7 @@ void TSOTraceBuilder::store(const ConstMRef &ml){
 }
 
 void TSOTraceBuilder::atomic_store(const ConstMRef &ml){
+  record_symbolic(SymEv::Store(ml));
   if(dryrun){
     assert(prefix_idx+1 < int(prefix.len()));
     assert(dry_sleepers <= prefix[prefix_idx+1].sleep.size());
@@ -550,7 +555,6 @@ void TSOTraceBuilder::atomic_store(const ConstMRef &ml){
   }
   IPid ipid = curev().iid.get_pid();
   curev().may_conflict = true;
-  record_symbolic(SymEv::Store(ml));
   bool is_update = ipid % 2;
 
   IPid uipid = ipid; // ID of the thread changing the memory
@@ -614,6 +618,7 @@ void TSOTraceBuilder::atomic_store(const ConstMRef &ml){
 }
 
 void TSOTraceBuilder::load(const ConstMRef &ml){
+  record_symbolic(SymEv::Load(ml));
   if(dryrun){
     assert(prefix_idx+1 < int(prefix.len()));
     assert(dry_sleepers <= prefix[prefix_idx+1].sleep.size());
@@ -625,7 +630,6 @@ void TSOTraceBuilder::load(const ConstMRef &ml){
     return;
   }
   curev().may_conflict = true;
-  record_symbolic(SymEv::Load(ml));
   IPid ipid = curev().iid.get_pid();
 
   /* Check if this is a ROWE */
@@ -669,6 +673,7 @@ void TSOTraceBuilder::load(const ConstMRef &ml){
 }
 
 void TSOTraceBuilder::full_memory_conflict(){
+  record_symbolic(SymEv::Fullmem());
   if(dryrun){
     assert(prefix_idx+1 < int(prefix.len()));
     assert(dry_sleepers <= prefix[prefix_idx+1].sleep.size());
@@ -677,7 +682,6 @@ void TSOTraceBuilder::full_memory_conflict(){
     return;
   }
   curev().may_conflict = true;
-  record_symbolic(SymEv::Fullmem());
 
   /* See all pervious memory accesses */
   VecSet<int> seen_accesses;
@@ -711,9 +715,9 @@ void TSOTraceBuilder::fence(){
 }
 
 void TSOTraceBuilder::join(int tgt_proc){
+  record_symbolic(SymEv::Join(tgt_proc));
   if(dryrun) return;
   curev().may_conflict = true;
-  record_symbolic(SymEv::Join(tgt_proc));
   IPid ipid = curev().iid.get_pid();
   curev().clock += threads[tgt_proc*2].clock;
   threads[ipid].clock += threads[tgt_proc*2].clock;
@@ -722,6 +726,7 @@ void TSOTraceBuilder::join(int tgt_proc){
 }
 
 void TSOTraceBuilder::mutex_lock(const ConstMRef &ml){
+  record_symbolic(SymEv::MLock(ml));
   if(dryrun){
     assert(prefix_idx+1 < int(prefix.len()));
     assert(dry_sleepers <= prefix[prefix_idx+1].sleep.size());
@@ -736,7 +741,6 @@ void TSOTraceBuilder::mutex_lock(const ConstMRef &ml){
   }
   assert(mutexes.count(ml.ref));
   curev().may_conflict = true;
-  record_symbolic(SymEv::MLock(ml));
   wakeup(Access::W,ml.ref);
 
   Mutex &mutex = mutexes[ml.ref];
@@ -779,6 +783,7 @@ void TSOTraceBuilder::mutex_lock_fail(const ConstMRef &ml){
 }
 
 void TSOTraceBuilder::mutex_trylock(const ConstMRef &ml){
+  record_symbolic(SymEv::MLock(ml));
   if(dryrun){
     assert(prefix_idx+1 < int(prefix.len()));
     assert(dry_sleepers <= prefix[prefix_idx+1].sleep.size());
@@ -793,7 +798,6 @@ void TSOTraceBuilder::mutex_trylock(const ConstMRef &ml){
   }
   assert(mutexes.count(ml.ref));
   curev().may_conflict = true;
-  record_symbolic(SymEv::MLock(ml));
   wakeup(Access::W,ml.ref);
   Mutex &mutex = mutexes[ml.ref];
   see_events({mutex.last_access,last_full_memory_conflict});
@@ -805,6 +809,7 @@ void TSOTraceBuilder::mutex_trylock(const ConstMRef &ml){
 }
 
 void TSOTraceBuilder::mutex_unlock(const ConstMRef &ml){
+  record_symbolic(SymEv::MUnlock(ml));
   if(dryrun){
     assert(prefix_idx+1 < int(prefix.len()));
     assert(dry_sleepers <= prefix[prefix_idx+1].sleep.size());
@@ -820,7 +825,6 @@ void TSOTraceBuilder::mutex_unlock(const ConstMRef &ml){
   assert(mutexes.count(ml.ref));
   Mutex &mutex = mutexes[ml.ref];
   curev().may_conflict = true;
-  record_symbolic(SymEv::MUnlock(ml));
   wakeup(Access::W,ml.ref);
   assert(0 <= mutex.last_access);
 
@@ -830,6 +834,7 @@ void TSOTraceBuilder::mutex_unlock(const ConstMRef &ml){
 }
 
 void TSOTraceBuilder::mutex_init(const ConstMRef &ml){
+  record_symbolic(SymEv::MInit(ml));
   if(dryrun){
     assert(prefix_idx+1 < int(prefix.len()));
     assert(dry_sleepers <= prefix[prefix_idx+1].sleep.size());
@@ -840,12 +845,12 @@ void TSOTraceBuilder::mutex_init(const ConstMRef &ml){
   fence();
   assert(mutexes.count(ml.ref) == 0);
   curev().may_conflict = true;
-  record_symbolic(SymEv::MInit(ml));
   mutexes[ml.ref] = Mutex(prefix_idx);
   see_events({last_full_memory_conflict});
 }
 
 void TSOTraceBuilder::mutex_destroy(const ConstMRef &ml){
+  record_symbolic(SymEv::MDelete(ml));
   if(dryrun){
     assert(prefix_idx+1 < int(prefix.len()));
     assert(dry_sleepers <= prefix[prefix_idx+1].sleep.size());
@@ -861,7 +866,6 @@ void TSOTraceBuilder::mutex_destroy(const ConstMRef &ml){
   assert(mutexes.count(ml.ref));
   Mutex &mutex = mutexes[ml.ref];
   curev().may_conflict = true;
-  record_symbolic(SymEv::MDelete(ml));
   wakeup(Access::W,ml.ref);
 
   see_events({mutex.last_access,last_full_memory_conflict});
@@ -870,6 +874,7 @@ void TSOTraceBuilder::mutex_destroy(const ConstMRef &ml){
 }
 
 bool TSOTraceBuilder::cond_init(const ConstMRef &ml){
+  record_symbolic(SymEv::CInit(ml));
   if(dryrun){
     assert(prefix_idx+1 < int(prefix.len()));
     assert(dry_sleepers <= prefix[prefix_idx+1].sleep.size());
@@ -883,13 +888,13 @@ bool TSOTraceBuilder::cond_init(const ConstMRef &ml){
     return false;
   }
   curev().may_conflict = true;
-  record_symbolic(SymEv::CInit(ml));
   cond_vars[ml.ref] = CondVar(prefix_idx);
   see_events({last_full_memory_conflict});
   return true;
 }
 
 bool TSOTraceBuilder::cond_signal(const ConstMRef &ml){
+  record_symbolic(SymEv::CSignal(ml));
   if(dryrun){
     assert(prefix_idx+1 < int(prefix.len()));
     assert(dry_sleepers <= prefix[prefix_idx+1].sleep.size());
@@ -899,7 +904,6 @@ bool TSOTraceBuilder::cond_signal(const ConstMRef &ml){
   }
   fence();
   curev().may_conflict = true;
-  record_symbolic(SymEv::CSignal(ml));
   wakeup(Access::W,ml.ref);
 
   auto it = cond_vars.find(ml.ref);
@@ -942,6 +946,7 @@ bool TSOTraceBuilder::cond_signal(const ConstMRef &ml){
 }
 
 bool TSOTraceBuilder::cond_broadcast(const ConstMRef &ml){
+  record_symbolic(SymEv::CBrdcst(ml));
   if(dryrun){
     assert(prefix_idx+1 < int(prefix.len()));
     assert(dry_sleepers <= prefix[prefix_idx+1].sleep.size());
@@ -951,7 +956,6 @@ bool TSOTraceBuilder::cond_broadcast(const ConstMRef &ml){
   }
   fence();
   curev().may_conflict = true;
-  record_symbolic(SymEv::CBrdcst(ml));
   wakeup(Access::W,ml.ref);
 
   auto it = cond_vars.find(ml.ref);
@@ -999,6 +1003,7 @@ bool TSOTraceBuilder::cond_wait(const ConstMRef &cond_ml, const ConstMRef &mutex
   }
 
   mutex_unlock(mutex_ml);
+  record_symbolic(SymEv::CWait(cond_ml));
   if(dryrun){
     assert(prefix_idx+1 < int(prefix.len()));
     assert(dry_sleepers <= prefix[prefix_idx+1].sleep.size());
@@ -1008,7 +1013,6 @@ bool TSOTraceBuilder::cond_wait(const ConstMRef &cond_ml, const ConstMRef &mutex
   }
   fence();
   curev().may_conflict = true;
-  record_symbolic(SymEv::CWait(cond_ml));
   wakeup(Access::R,cond_ml.ref);
 
   IPid pid = curev().iid.get_pid();
@@ -1028,16 +1032,17 @@ bool TSOTraceBuilder::cond_wait(const ConstMRef &cond_ml, const ConstMRef &mutex
 
 bool TSOTraceBuilder::cond_awake(const ConstMRef &cond_ml, const ConstMRef &mutex_ml){
   mutex_lock(mutex_ml);
+  record_symbolic(SymEv::CAwake(cond_ml));
   if(dryrun){
     return true;
   }
   curev().may_conflict = true;
-  record_symbolic(SymEv::CAwake(cond_ml));
 
   return true;
 }
 
 int TSOTraceBuilder::cond_destroy(const ConstMRef &ml){
+  record_symbolic(SymEv::CDelete(ml));
   if(dryrun){
     assert(prefix_idx+1 < int(prefix.len()));
     assert(dry_sleepers <= prefix[prefix_idx+1].sleep.size());
@@ -1050,7 +1055,6 @@ int TSOTraceBuilder::cond_destroy(const ConstMRef &ml){
   int err = (EBUSY == 1) ? 2 : 1; // Chose an error value different from EBUSY
 
   curev().may_conflict = true;
-  record_symbolic(SymEv::CDelete(ml));
   wakeup(Access::W,ml.ref);
 
   auto it = cond_vars.find(ml.ref);
@@ -1087,6 +1091,31 @@ VecSet<TSOTraceBuilder::IPid> TSOTraceBuilder::sleep_set_at(int i){
   }
   sleep.insert(prefix[i].sleep);
   return sleep;
+}
+
+VecSet<TSOTraceBuilder::IPid> TSOTraceBuilder::opt_sleep_set_at(int i){
+  std::map<IPid,const sym_ty*> sleep;
+  for(int j = 0; j < i; ++j){
+    for (int k = 0; k < prefix[j].sleep.size(); ++k){
+      sleep.emplace(prefix[j].sleep[k],
+                    &prefix[j].sleep_evs[k]);
+    }
+    for (auto it = sleep.begin(); it != sleep.end();) {
+      if (do_events_conflict(prefix[j].iid.get_pid(), prefix[j].sym,
+                             it->first, *it->second))
+        it = sleep.erase(it);
+      else
+        ++it;
+    }
+  }
+
+  /* Efficiently make a VecSet */
+  std::vector<IPid> keys(sleep.size());
+  std::transform(sleep.begin(), sleep.end(), keys.begin(),
+                 [](std::pair<const IPid,const sym_ty*> &r){return r.first;});
+  VecSet<IPid> vsleep(std::move(keys));
+  vsleep.insert(prefix[i].sleep);
+  return vsleep;
 }
 
 void TSOTraceBuilder::see_events(const VecSet<int> &seen_accesses){
@@ -1133,7 +1162,14 @@ void TSOTraceBuilder::add_lock_race(const Mutex &m, int event){
 }
 
 void TSOTraceBuilder::record_symbolic(SymEv event){
-  assert(!dryrun);
+  if(dryrun) {
+    assert(prefix_idx+1 < int(prefix.len()));
+    assert(dry_sleepers <= prefix[prefix_idx+1].sleep.size());
+    IPid pid = prefix[prefix_idx+1].sleep[dry_sleepers-1];
+    assert(threads[pid].sleep_sym);
+    threads[pid].sleep_sym->push_back(event);
+    return;
+  }
   if (sym_idx == curev().sym.size()) {
     // assert(!replay);
     if (replay) {
@@ -1180,8 +1216,8 @@ bool TSOTraceBuilder::do_symevs_conflict
 }
 
 bool TSOTraceBuilder::do_events_conflict
-(IPid fst_pid, const Event::sym_ty &fst,
- IPid snd_pid, const Event::sym_ty &snd) const{
+(IPid fst_pid, const sym_ty &fst,
+ IPid snd_pid, const sym_ty &snd) const{
   if (fst_pid == snd_pid) return true;
   for (const SymEv &fe : fst) {
     if (fe.has_num() && fe.num() == (snd_pid / 2)) return true;
@@ -1282,7 +1318,7 @@ void TSOTraceBuilder::race_detect_optimal(const ReversibleRace &race){
   const int i = race.first_event;
   const int j = race.second_event;
 
-  VecSet<IPid> isleep = sleep_set_at(i);
+  VecSet<IPid> isleep = opt_sleep_set_at(i);
   Event *first = &prefix[i];
 
   Event second({-1,0},{});
@@ -1384,7 +1420,7 @@ void TSOTraceBuilder::race_detect_optimal(const ReversibleRace &race){
     enum { NO, RECURSE, NEXT } skip = NO;
     for (auto child_it = node.begin(); child_it != node.end(); ++child_it) {
       /* Find this event in prefix */
-      Event::sym_ty child_sym;
+      sym_ty child_sym;
       IID<IPid> child_iid(child_it.branch().pid,
                           iid_map[child_it.branch().pid]);
       unsigned k = find_process_event(child_iid.get_pid(), child_iid.get_index());
@@ -1501,10 +1537,12 @@ bool TSOTraceBuilder::has_pending_store(IPid pid, void const *ml) const {
 
 void TSOTraceBuilder::wakeup(Access::Type type, void const *ml){
   IPid pid = curev().iid.get_pid();
+  sym_ty ev;
   std::vector<IPid> wakeup; // Wakeup these
   switch(type){
   case Access::W_ALL_MEMORY:
     {
+      ev.push_back(SymEv::Fullmem());
       for(unsigned p = 0; p < threads.size(); ++p){
         if(threads[p].sleep_full_memory_conflict ||
            threads[p].sleep_accesses_w.size()){
@@ -1522,6 +1560,7 @@ void TSOTraceBuilder::wakeup(Access::Type type, void const *ml){
     }
   case Access::R:
     {
+      ev.push_back(SymEv::Load(SymAddr(ml,1)));
       for(unsigned p = 0; p < threads.size(); ++p){
         if(threads[p].sleep_full_memory_conflict ||
            (int(p) != pid+1 &&
@@ -1533,6 +1572,7 @@ void TSOTraceBuilder::wakeup(Access::Type type, void const *ml){
     }
   case Access::W:
     {
+      ev.push_back(SymEv::Store(SymAddr(ml,1)));
       for(unsigned p = 0; p < threads.size(); ++p){
         if(threads[p].sleep_full_memory_conflict ||
            (int(p) + 1 != pid &&
@@ -1548,11 +1588,24 @@ void TSOTraceBuilder::wakeup(Access::Type type, void const *ml){
     throw std::logic_error("TSOTraceBuilder::wakeup: Unknown type of memory access.");
   }
 
+#ifndef NDEBUG
+  if (conf.dpor_algorithm == Configuration::OPTIMAL) {
+    VecSet<IPid> wakeup_set(wakeup);
+    for (unsigned p = 0; p < threads.size(); ++p){
+      if (!threads[p].sleeping) continue;
+      assert(threads[p].sleep_sym);
+      assert(bool(wakeup_set.count(p))
+             == do_events_conflict(pid, ev, p, *threads[p].sleep_sym));
+    }
+  }
+#endif
+
   for(IPid p : wakeup){
     assert(threads[p].sleeping);
     threads[p].sleep_accesses_r.clear();
     threads[p].sleep_accesses_w.clear();
     threads[p].sleep_full_memory_conflict = false;
+    threads[p].sleep_sym = nullptr;
     threads[p].sleeping = false;
     curev().wakeup.insert(p);
   }
