@@ -85,6 +85,7 @@ public:
       "__assert_fail",
       "atexit"
     };
+    observers = false;
     check_robustness = false;
     ee_store_trace = false;
     debug_collect_all_traces = false;
@@ -132,6 +133,8 @@ public:
   DPORAlgorithm dpor_algorithm;
   /* Which scheduling algorithm should be used? */
   SchedulingAlgorithm scheduling_algorithm;
+  /* Should the observers optimisation be used? */
+  bool observers;
   /* A set of names of external functions that should be assumed to
    * not have fencing behavior. Notice however that the function
    * itself will still execute atomically, which may cause behaviors
