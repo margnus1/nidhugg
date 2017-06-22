@@ -83,6 +83,22 @@ namespace DPORDriver_test {
     os << _t->to_string(ind);
   }
 
+  trace_set_spec spec_xprod(const std::vector<trace_set_spec> &specs){
+    trace_set_spec res{{}}; /* Singleton set of the empty spec */
+
+    for (const trace_set_spec &set_spec : specs) {
+      trace_set_spec newres;
+      for (const trace_spec speca : res)
+        for (const trace_spec specb : set_spec) {
+          trace_spec spec = speca;
+          spec.insert(spec.end(), specb.begin(), specb.end());
+          newres.push_back(std::move(spec));
+        }
+      res = std::move(newres);
+    }
+    return res;
+  }
+
   int find(const IIDVCSeqTrace *t, const IID<CPid> &iid){
     for(int i = 0; i < int(t->size()); ++i){
       if(t->get_iid(i) == iid){
@@ -198,10 +214,13 @@ namespace DPORDriver_test {
 
   static bool trace_equiv(const Trace *a, const Trace *b){
     if (a->get_errors().size() != b->get_errors().size()) return false;
-    std::list<Error*> bes(b->get_errors().begin(), b->get_errors().end());
-    for (const Error *ae : a->get_errors()) {
-      auto bei = std::find_if(bes.begin(), bes.end(), [ae](Error *be){
-          return error_equiv(ae, be);
+    std::list<Error*> bes;
+    for (const std::unique_ptr<Error> &be : b->get_errors()) {
+      bes.push_back(be.get());
+    }
+    for (const std::unique_ptr<Error> &ae : a->get_errors()) {
+      auto bei = std::find_if(bes.begin(), bes.end(), [&ae](const Error *be){
+          return error_equiv(ae.get(), be);
         });
       if (bei == bes.end()) return false;
       bei = bes.erase(bei);
