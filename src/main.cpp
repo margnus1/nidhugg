@@ -109,6 +109,11 @@ int main(int argc, char *argv[]){
       std::cout << "Trace count: " << res.trace_count
                 << " (also " << res.sleepset_blocked_trace_count
                 << " sleepset blocked)" << std::endl;
+      if (res.unobserved_writes) {
+        std::cout << "Unobserved writes: " << res.unobserved_writes
+                  << " (in " << res.unobserved_traces
+                  << " traces)" << std::endl;
+      }
       if(res.has_errors()){
         errors_detected = true;
         std::cout << "\n Error detected:\n"

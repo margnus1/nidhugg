@@ -2083,3 +2083,15 @@ int TSOTraceBuilder::estimate_trace_count(int idx) const{
 
   return count;
 }
+
+int TSOTraceBuilder::count_unobserved_writes() const{
+  int unobserved = 0;
+  for (unsigned i = 0; i < prefix.len(); i++) {
+    const Event &e = prefix[i];
+    for (const SymEv &s : e.sym) {
+      if (s.kind == SymEv::UNOBS_STORE) unobserved++;
+    }
+  }
+
+  return unobserved;
+}

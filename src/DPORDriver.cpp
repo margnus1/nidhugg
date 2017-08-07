@@ -251,6 +251,11 @@ DPORDriver::Result DPORDriver::run(){
     }else{
       ++res.sleepset_blocked_trace_count;
     }
+    if (conf.memory_model == Configuration::SC) {
+      int unobserved_writes = ((TSOTraceBuilder*)TB)->count_unobserved_writes();
+      res.unobserved_writes += unobserved_writes;
+      if (unobserved_writes) res.unobserved_traces++;
+    }
     ++computation_count;
     if(t && t->has_errors() && !res.has_errors()){
       res.error_trace = t;

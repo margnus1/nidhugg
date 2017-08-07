@@ -66,6 +66,7 @@ public:
   virtual int cond_destroy(const ConstMRef &ml);
   virtual void register_alternatives(int alt_count);
   virtual int estimate_trace_count() const;
+  int count_unobserved_writes() const;
 protected:
   /* An identifier for a thread. An index into this->threads.
    *
