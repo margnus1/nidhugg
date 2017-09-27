@@ -530,7 +530,7 @@ void TSOTraceBuilder::spawn(){
   record_symbolic(SymEv::Spawn(threads.size() / 2 - 1));
 }
 
-void TSOTraceBuilder::store(const ConstMRef &ml){
+void TSOTraceBuilder::store(const SymAddrSize &ml){
   if(dryrun) return;
   curev().may_conflict = true; /* prefix_idx might become bad otherwise */
   IPid ipid = curev().iid.get_pid();
@@ -538,7 +538,7 @@ void TSOTraceBuilder::store(const ConstMRef &ml){
   threads[ipid+1].available = true;
 }
 
-void TSOTraceBuilder::atomic_store(const ConstMRef &ml){
+void TSOTraceBuilder::atomic_store(const SymAddrSize &ml){
   if (conf.observers)
     record_symbolic(SymEv::UnobsStore(ml));
   else
@@ -547,8 +547,8 @@ void TSOTraceBuilder::atomic_store(const ConstMRef &ml){
     assert(prefix_idx+1 < int(prefix.len()));
     assert(dry_sleepers <= prefix[prefix_idx+1].sleep.size());
     IPid pid = prefix[prefix_idx+1].sleep[dry_sleepers-1];
-    VecSet<void const*> &A = threads[pid].sleep_accesses_w;
-    for(void const *b : ml){
+    VecSet<SymAddr> &A = threads[pid].sleep_accesses_w;
+    for(SymAddr b : ml){
       A.insert(b);
     }
     return;
@@ -575,7 +575,7 @@ void TSOTraceBuilder::atomic_store(const ConstMRef &ml){
   VecSet<int> seen_accesses;
 
   /* See previous updates reads to ml */
-  for(void const *b : ml){
+  for(SymAddr b : ml){
     ByteInfo &bi = mem[b];
     int lu = bi.last_update;
     assert(lu < int(prefix.len()));
@@ -597,7 +597,7 @@ void TSOTraceBuilder::atomic_store(const ConstMRef &ml){
   see_events(seen_accesses);
 
   /* Register in memory */
-  for(void const *b : ml){
+  for(SymAddr b : ml){
     ByteInfo &bi = mem[b];
     if (conf.observers) {
       bi.unordered_updates.insert_geq(prefix_idx);
@@ -621,14 +621,14 @@ void TSOTraceBuilder::atomic_store(const ConstMRef &ml){
   }
 }
 
-void TSOTraceBuilder::load(const ConstMRef &ml){
+void TSOTraceBuilder::load(const SymAddrSize &ml){
   record_symbolic(SymEv::Load(ml));
   if(dryrun){
     assert(prefix_idx+1 < int(prefix.len()));
     assert(dry_sleepers <= prefix[prefix_idx+1].sleep.size());
     IPid pid = prefix[prefix_idx+1].sleep[dry_sleepers-1];
-    VecSet<void const*> &A = threads[pid].sleep_accesses_r;
-    for(void const *b : ml){
+    VecSet<SymAddr> &A = threads[pid].sleep_accesses_r;
+    for(SymAddr b : ml){
       A.insert(b);
     }
     return;
@@ -638,7 +638,7 @@ void TSOTraceBuilder::load(const ConstMRef &ml){
 
   /* Check if this is a ROWE */
   for(int i = int(threads[ipid].store_buffer.size())-1; 0 <= i; --i){
-    if(threads[ipid].store_buffer[i].ml.ref == ml.ref){
+    if(threads[ipid].store_buffer[i].ml.addr == ml.addr){
       /* ROWE */
       threads[ipid].store_buffer[i].last_rowe = prefix_idx;
       return;
@@ -651,9 +651,9 @@ void TSOTraceBuilder::load(const ConstMRef &ml){
   VecSet<std::pair<int,int>> seen_pairs;
 
   /* See all updates to the read bytes. */
-  for(void const *b : ml){
+  for(SymAddr b : ml){
     int lu = mem[b].last_update;
-    const ConstMRef &lu_ml = mem[b].last_update_ml;
+    const SymAddrSize &lu_ml = mem[b].last_update_ml;
     if(0 <= lu){
       IPid lu_tipid = 2*(prefix[lu].iid.get_pid() / 2);
       if(lu_tipid != ipid){
@@ -691,7 +691,7 @@ void TSOTraceBuilder::load(const ConstMRef &ml){
   see_event_pairs(seen_pairs);
 
   /* Register load in memory */
-  for(void const *b : ml){
+  for(SymAddr b : ml){
     mem[b].last_read[ipid/2] = prefix_idx;
     wakeup(Access::R,b);
   }
@@ -724,7 +724,7 @@ void TSOTraceBuilder::full_memory_conflict(){
 
   see_events(seen_accesses);
 
-  wakeup(Access::W_ALL_MEMORY,0);
+  wakeup(Access::W_ALL_MEMORY,{SymMBlock::Global(0),0});
   last_full_memory_conflict = prefix_idx;
 
   /* No later access can have a conflict with any earlier access */
@@ -749,25 +749,25 @@ void TSOTraceBuilder::join(int tgt_proc){
   add_happens_after_thread(prefix_idx, tgt_proc*2+1);
 }
 
-void TSOTraceBuilder::mutex_lock(const ConstMRef &ml){
+void TSOTraceBuilder::mutex_lock(const SymAddrSize &ml){
   record_symbolic(SymEv::MLock(ml));
   if(dryrun){
     assert(prefix_idx+1 < int(prefix.len()));
     assert(dry_sleepers <= prefix[prefix_idx+1].sleep.size());
     IPid pid = prefix[prefix_idx+1].sleep[dry_sleepers-1];
-    threads[pid].sleep_accesses_w.insert(ml.ref);
+    threads[pid].sleep_accesses_w.insert(ml.addr);
     return;
   }
   fence();
-  if(!conf.mutex_require_init && !mutexes.count(ml.ref)){
+  if(!conf.mutex_require_init && !mutexes.count(ml.addr)){
     // Assume static initialization
-    mutexes[ml.ref] = Mutex();
+    mutexes[ml.addr] = Mutex();
   }
-  assert(mutexes.count(ml.ref));
+  assert(mutexes.count(ml.addr));
   curev().may_conflict = true;
-  wakeup(Access::W,ml.ref);
+  wakeup(Access::W,ml.addr);
 
-  Mutex &mutex = mutexes[ml.ref];
+  Mutex &mutex = mutexes[ml.addr];
   IPid ipid = curev().iid.get_pid();
 
   if(mutex.last_lock < 0){
@@ -781,14 +781,14 @@ void TSOTraceBuilder::mutex_lock(const ConstMRef &ml){
   mutex.last_lock = mutex.last_access = prefix_idx;
 }
 
-void TSOTraceBuilder::mutex_lock_fail(const ConstMRef &ml){
+void TSOTraceBuilder::mutex_lock_fail(const SymAddrSize &ml){
   assert(!dryrun);
-  if(!conf.mutex_require_init && !mutexes.count(ml.ref)){
+  if(!conf.mutex_require_init && !mutexes.count(ml.addr)){
     // Assume static initialization
-    mutexes[ml.ref] = Mutex();
+    mutexes[ml.addr] = Mutex();
   }
-  assert(mutexes.count(ml.ref));
-  Mutex &mutex = mutexes[ml.ref];
+  assert(mutexes.count(ml.addr));
+  Mutex &mutex = mutexes[ml.addr];
   assert(0 <= mutex.last_lock);
   add_lock_fail_race(mutex, mutex.last_lock);
 
@@ -797,24 +797,24 @@ void TSOTraceBuilder::mutex_lock_fail(const ConstMRef &ml){
   }
 }
 
-void TSOTraceBuilder::mutex_trylock(const ConstMRef &ml){
+void TSOTraceBuilder::mutex_trylock(const SymAddrSize &ml){
   record_symbolic(SymEv::MLock(ml));
   if(dryrun){
     assert(prefix_idx+1 < int(prefix.len()));
     assert(dry_sleepers <= prefix[prefix_idx+1].sleep.size());
     IPid pid = prefix[prefix_idx+1].sleep[dry_sleepers-1];
-    threads[pid].sleep_accesses_w.insert(ml.ref);
+    threads[pid].sleep_accesses_w.insert(ml.addr);
     return;
   }
   fence();
-  if(!conf.mutex_require_init && !mutexes.count(ml.ref)){
+  if(!conf.mutex_require_init && !mutexes.count(ml.addr)){
     // Assume static initialization
-    mutexes[ml.ref] = Mutex();
+    mutexes[ml.addr] = Mutex();
   }
-  assert(mutexes.count(ml.ref));
+  assert(mutexes.count(ml.addr));
   curev().may_conflict = true;
-  wakeup(Access::W,ml.ref);
-  Mutex &mutex = mutexes[ml.ref];
+  wakeup(Access::W,ml.addr);
+  Mutex &mutex = mutexes[ml.addr];
   see_events({mutex.last_access,last_full_memory_conflict});
 
   mutex.last_access = prefix_idx;
@@ -823,24 +823,24 @@ void TSOTraceBuilder::mutex_trylock(const ConstMRef &ml){
   }
 }
 
-void TSOTraceBuilder::mutex_unlock(const ConstMRef &ml){
+void TSOTraceBuilder::mutex_unlock(const SymAddrSize &ml){
   record_symbolic(SymEv::MUnlock(ml));
   if(dryrun){
     assert(prefix_idx+1 < int(prefix.len()));
     assert(dry_sleepers <= prefix[prefix_idx+1].sleep.size());
     IPid pid = prefix[prefix_idx+1].sleep[dry_sleepers-1];
-    threads[pid].sleep_accesses_w.insert(ml.ref);
+    threads[pid].sleep_accesses_w.insert(ml.addr);
     return;
   }
   fence();
-  if(!conf.mutex_require_init && !mutexes.count(ml.ref)){
+  if(!conf.mutex_require_init && !mutexes.count(ml.addr)){
     // Assume static initialization
-    mutexes[ml.ref] = Mutex();
+    mutexes[ml.addr] = Mutex();
   }
-  assert(mutexes.count(ml.ref));
-  Mutex &mutex = mutexes[ml.ref];
+  assert(mutexes.count(ml.addr));
+  Mutex &mutex = mutexes[ml.addr];
   curev().may_conflict = true;
-  wakeup(Access::W,ml.ref);
+  wakeup(Access::W,ml.addr);
   assert(0 <= mutex.last_access);
 
   see_events({mutex.last_access,last_full_memory_conflict});
@@ -848,80 +848,80 @@ void TSOTraceBuilder::mutex_unlock(const ConstMRef &ml){
   mutex.last_access = prefix_idx;
 }
 
-void TSOTraceBuilder::mutex_init(const ConstMRef &ml){
+void TSOTraceBuilder::mutex_init(const SymAddrSize &ml){
   record_symbolic(SymEv::MInit(ml));
   if(dryrun){
     assert(prefix_idx+1 < int(prefix.len()));
     assert(dry_sleepers <= prefix[prefix_idx+1].sleep.size());
     IPid pid = prefix[prefix_idx+1].sleep[dry_sleepers-1];
-    threads[pid].sleep_accesses_w.insert(ml.ref);
+    threads[pid].sleep_accesses_w.insert(ml.addr);
     return;
   }
   fence();
-  assert(mutexes.count(ml.ref) == 0);
+  assert(mutexes.count(ml.addr) == 0);
   curev().may_conflict = true;
-  mutexes[ml.ref] = Mutex(prefix_idx);
+  mutexes[ml.addr] = Mutex(prefix_idx);
   see_events({last_full_memory_conflict});
 }
 
-void TSOTraceBuilder::mutex_destroy(const ConstMRef &ml){
+void TSOTraceBuilder::mutex_destroy(const SymAddrSize &ml){
   record_symbolic(SymEv::MDelete(ml));
   if(dryrun){
     assert(prefix_idx+1 < int(prefix.len()));
     assert(dry_sleepers <= prefix[prefix_idx+1].sleep.size());
     IPid pid = prefix[prefix_idx+1].sleep[dry_sleepers-1];
-    threads[pid].sleep_accesses_w.insert(ml.ref);
+    threads[pid].sleep_accesses_w.insert(ml.addr);
     return;
   }
   fence();
-  if(!conf.mutex_require_init && !mutexes.count(ml.ref)){
+  if(!conf.mutex_require_init && !mutexes.count(ml.addr)){
     // Assume static initialization
-    mutexes[ml.ref] = Mutex();
+    mutexes[ml.addr] = Mutex();
   }
-  assert(mutexes.count(ml.ref));
-  Mutex &mutex = mutexes[ml.ref];
+  assert(mutexes.count(ml.addr));
+  Mutex &mutex = mutexes[ml.addr];
   curev().may_conflict = true;
-  wakeup(Access::W,ml.ref);
+  wakeup(Access::W,ml.addr);
 
   see_events({mutex.last_access,last_full_memory_conflict});
 
-  mutexes.erase(ml.ref);
+  mutexes.erase(ml.addr);
 }
 
-bool TSOTraceBuilder::cond_init(const ConstMRef &ml){
+bool TSOTraceBuilder::cond_init(const SymAddrSize &ml){
   record_symbolic(SymEv::CInit(ml));
   if(dryrun){
     assert(prefix_idx+1 < int(prefix.len()));
     assert(dry_sleepers <= prefix[prefix_idx+1].sleep.size());
     IPid pid = prefix[prefix_idx+1].sleep[dry_sleepers-1];
-    threads[pid].sleep_accesses_w.insert(ml.ref);
+    threads[pid].sleep_accesses_w.insert(ml.addr);
     return true;
   }
   fence();
-  if(cond_vars.count(ml.ref)){
+  if(cond_vars.count(ml.addr)){
     pthreads_error("Condition variable initiated twice.");
     return false;
   }
   curev().may_conflict = true;
-  cond_vars[ml.ref] = CondVar(prefix_idx);
+  cond_vars[ml.addr] = CondVar(prefix_idx);
   see_events({last_full_memory_conflict});
   return true;
 }
 
-bool TSOTraceBuilder::cond_signal(const ConstMRef &ml){
+bool TSOTraceBuilder::cond_signal(const SymAddrSize &ml){
   record_symbolic(SymEv::CSignal(ml));
   if(dryrun){
     assert(prefix_idx+1 < int(prefix.len()));
     assert(dry_sleepers <= prefix[prefix_idx+1].sleep.size());
     IPid pid = prefix[prefix_idx+1].sleep[dry_sleepers-1];
-    threads[pid].sleep_accesses_w.insert(ml.ref);
+    threads[pid].sleep_accesses_w.insert(ml.addr);
     return true;
   }
   fence();
   curev().may_conflict = true;
-  wakeup(Access::W,ml.ref);
+  wakeup(Access::W,ml.addr);
 
-  auto it = cond_vars.find(ml.ref);
+  auto it = cond_vars.find(ml.addr);
   if(it == cond_vars.end()){
     pthreads_error("cond_signal called with uninitialized condition variable.");
     return false;
@@ -956,20 +956,20 @@ bool TSOTraceBuilder::cond_signal(const ConstMRef &ml){
   return true;
 }
 
-bool TSOTraceBuilder::cond_broadcast(const ConstMRef &ml){
+bool TSOTraceBuilder::cond_broadcast(const SymAddrSize &ml){
   record_symbolic(SymEv::CBrdcst(ml));
   if(dryrun){
     assert(prefix_idx+1 < int(prefix.len()));
     assert(dry_sleepers <= prefix[prefix_idx+1].sleep.size());
     IPid pid = prefix[prefix_idx+1].sleep[dry_sleepers-1];
-    threads[pid].sleep_accesses_w.insert(ml.ref);
+    threads[pid].sleep_accesses_w.insert(ml.addr);
     return true;
   }
   fence();
   curev().may_conflict = true;
-  wakeup(Access::W,ml.ref);
+  wakeup(Access::W,ml.addr);
 
-  auto it = cond_vars.find(ml.ref);
+  auto it = cond_vars.find(ml.addr);
   if(it == cond_vars.end()){
     pthreads_error("cond_broadcast called with uninitialized condition variable.");
     return false;
@@ -991,9 +991,9 @@ bool TSOTraceBuilder::cond_broadcast(const ConstMRef &ml){
   return true;
 }
 
-bool TSOTraceBuilder::cond_wait(const ConstMRef &cond_ml, const ConstMRef &mutex_ml){
+bool TSOTraceBuilder::cond_wait(const SymAddrSize &cond_ml, const SymAddrSize &mutex_ml){
   {
-    auto it = mutexes.find(mutex_ml.ref);
+    auto it = mutexes.find(mutex_ml.addr);
     if(!dryrun && it == mutexes.end()){
       if(conf.mutex_require_init){
         pthreads_error("cond_wait called with uninitialized mutex object.");
@@ -1015,16 +1015,16 @@ bool TSOTraceBuilder::cond_wait(const ConstMRef &cond_ml, const ConstMRef &mutex
     assert(prefix_idx+1 < int(prefix.len()));
     assert(dry_sleepers <= prefix[prefix_idx+1].sleep.size());
     IPid pid = prefix[prefix_idx+1].sleep[dry_sleepers-1];
-    threads[pid].sleep_accesses_r.insert(cond_ml.ref);
+    threads[pid].sleep_accesses_r.insert(cond_ml.addr);
     return true;
   }
   fence();
   curev().may_conflict = true;
-  wakeup(Access::R,cond_ml.ref);
+  wakeup(Access::R,cond_ml.addr);
 
   IPid pid = curev().iid.get_pid();
 
-  auto it = cond_vars.find(cond_ml.ref);
+  auto it = cond_vars.find(cond_ml.addr);
   if(it == cond_vars.end()){
     pthreads_error("cond_wait called with uninitialized condition variable.");
     return false;
@@ -1037,10 +1037,10 @@ bool TSOTraceBuilder::cond_wait(const ConstMRef &cond_ml, const ConstMRef &mutex
   return true;
 }
 
-bool TSOTraceBuilder::cond_awake(const ConstMRef &cond_ml, const ConstMRef &mutex_ml){
+bool TSOTraceBuilder::cond_awake(const SymAddrSize &cond_ml, const SymAddrSize &mutex_ml){
   if (!dryrun){
-    assert(cond_vars.count(cond_ml.ref));
-    CondVar &cond_var = cond_vars[cond_ml.ref];
+    assert(cond_vars.count(cond_ml.addr));
+    CondVar &cond_var = cond_vars[cond_ml.addr];
     add_happens_after(prefix_idx, cond_var.last_signal);
   }
 
@@ -1054,13 +1054,13 @@ bool TSOTraceBuilder::cond_awake(const ConstMRef &cond_ml, const ConstMRef &mute
   return true;
 }
 
-int TSOTraceBuilder::cond_destroy(const ConstMRef &ml){
+int TSOTraceBuilder::cond_destroy(const SymAddrSize &ml){
   record_symbolic(SymEv::CDelete(ml));
   if(dryrun){
     assert(prefix_idx+1 < int(prefix.len()));
     assert(dry_sleepers <= prefix[prefix_idx+1].sleep.size());
     IPid pid = prefix[prefix_idx+1].sleep[dry_sleepers-1];
-    threads[pid].sleep_accesses_w.insert(ml.ref);
+    threads[pid].sleep_accesses_w.insert(ml.addr);
     return 0;
   }
   fence();
@@ -1068,9 +1068,9 @@ int TSOTraceBuilder::cond_destroy(const ConstMRef &ml){
   int err = (EBUSY == 1) ? 2 : 1; // Chose an error value different from EBUSY
 
   curev().may_conflict = true;
-  wakeup(Access::W,ml.ref);
+  wakeup(Access::W,ml.addr);
 
-  auto it = cond_vars.find(ml.ref);
+  auto it = cond_vars.find(ml.addr);
   if(it == cond_vars.end()){
     pthreads_error("cond_destroy called on uninitialized condition variable.");
     return err;
@@ -1081,7 +1081,7 @@ int TSOTraceBuilder::cond_destroy(const ConstMRef &ml){
   see_events(seen_events);
 
   int rv = cond_var.waiters.size() ? EBUSY : 0;
-  cond_vars.erase(ml.ref);
+  cond_vars.erase(ml.addr);
   return rv;
 }
 
@@ -1723,7 +1723,7 @@ void TSOTraceBuilder::race_detect_optimal
      * When read_all, last_reads is instead the set of addresses that have *not*
      * been read. All addresses that are not in last_reads are read.
      */
-    VecSet<const void*> last_reads;
+    VecSet<SymAddr> last_reads;
     bool read_all = false;
 
     for (auto vi = v.end(); vi != v.begin();){
@@ -1733,19 +1733,19 @@ void TSOTraceBuilder::race_detect_optimal
         switch(e.kind){
         case SymEv::LOAD:
           if (read_all)
-               last_reads.erase (VecSet<const void*>(e.addr().begin(), e.addr().end()));
-          else last_reads.insert(VecSet<const void*>(e.addr().begin(), e.addr().end()));
+               last_reads.erase (VecSet<SymAddr>(e.addr().begin(), e.addr().end()));
+          else last_reads.insert(VecSet<SymAddr>(e.addr().begin(), e.addr().end()));
           break;
         case SymEv::STORE:
           assert(false); abort();
         case SymEv::UNOBS_STORE:
           if (read_all ^ last_reads.intersects
-              (VecSet<const void*>(e.addr().begin(), e.addr().end()))){
+              (VecSet<SymAddr>(e.addr().begin(), e.addr().end()))){
             e = SymEv::Store(e.addr());
           }
           if (read_all)
-               last_reads.insert(VecSet<const void*>(e.addr().begin(), e.addr().end()));
-          else last_reads.erase (VecSet<const void*>(e.addr().begin(), e.addr().end()));
+               last_reads.insert(VecSet<SymAddr>(e.addr().begin(), e.addr().end()));
+          else last_reads.erase (VecSet<SymAddr>(e.addr().begin(), e.addr().end()));
           break;
         case SymEv::FULLMEM:
           last_reads.clear();
@@ -2031,7 +2031,7 @@ inline unsigned TSOTraceBuilder::find_process_event(IPid pid, int index) const{
   return k;
 }
 
-bool TSOTraceBuilder::has_pending_store(IPid pid, void const *ml) const {
+bool TSOTraceBuilder::has_pending_store(IPid pid, SymAddr ml) const {
   const std::vector<PendingStore> &sb = threads[pid].store_buffer;
   for(unsigned i = 0; i < sb.size(); ++i){
     if(sb[i].ml.includes(ml)){
@@ -2041,7 +2041,7 @@ bool TSOTraceBuilder::has_pending_store(IPid pid, void const *ml) const {
   return false;
 }
 
-void TSOTraceBuilder::wakeup(Access::Type type, void const *ml){
+void TSOTraceBuilder::wakeup(Access::Type type, SymAddr ml){
   IPid pid = curev().iid.get_pid();
   sym_ty ev;
   std::vector<IPid> wakeup; // Wakeup these
@@ -2054,7 +2054,7 @@ void TSOTraceBuilder::wakeup(Access::Type type, void const *ml){
            threads[p].sleep_accesses_w.size()){
           wakeup.push_back(p);
         }else{
-          for(void const *b : threads[p].sleep_accesses_r){
+          for(SymAddr b : threads[p].sleep_accesses_r){
             if(!has_pending_store(p,b)){
               wakeup.push_back(p);
               break;
@@ -2066,7 +2066,7 @@ void TSOTraceBuilder::wakeup(Access::Type type, void const *ml){
     }
   case Access::R:
     {
-      ev.push_back(SymEv::Load(SymAddr(ml,1)));
+      ev.push_back(SymEv::Load(SymAddrSize(ml,1)));
       for(unsigned p = 0; p < threads.size(); ++p){
         if(threads[p].sleep_full_memory_conflict ||
            (int(p) != pid+1 &&
@@ -2078,7 +2078,7 @@ void TSOTraceBuilder::wakeup(Access::Type type, void const *ml){
     }
   case Access::W:
     {
-      ev.push_back(SymEv::Store(SymAddr(ml,1)));
+      ev.push_back(SymEv::Store(SymAddrSize(ml,1)));
       for(unsigned p = 0; p < threads.size(); ++p){
         if(threads[p].sleep_full_memory_conflict ||
            (int(p) + 1 != pid &&
