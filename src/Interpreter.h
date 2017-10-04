@@ -41,6 +41,7 @@
 #include "CPid.h"
 #include "SymAddr.h"
 #include "VClock.h"
+#include "Option.h"
 #include "TSOPSOTraceBuilder.h"
 
 #include <llvm/ExecutionEngine/ExecutionEngine.h>
@@ -466,18 +467,26 @@ protected:  // Helper functions
   virtual void clearAllStacks();
 
 
-  /* Get a SymAddr for the pointer Ptr */
+  /* Get a SymAddr for the pointer Ptr, returning false if the address
+   * is unknown. */
+  Option<SymAddr> TryGetSymAddr(void *Ptr);
+  /* Get a SymAddr for the pointer Ptr that is assumed to be known */
   SymAddr GetSymAddr(void *Ptr);
   /* Get a SymAddrSize for the pointer Ptr, with the size given by Ty for
    * the current data layout.
    */
-  SymAddrSize GetSymAddrSize(void *Ptr, Type *Ty){
+  SymAddrSize GetSymAddrSize(void *Ptr, Type *Ty);
+  Option<SymAddrSize> TryGetSymAddrSize(void *Ptr, Type *Ty){
+    if (Option<SymAddr> addr = TryGetSymAddr(Ptr)) {
 #ifdef LLVM_EXECUTIONENGINE_DATALAYOUT_PTR
-    return {GetSymAddr(Ptr),getDataLayout()->getTypeStoreSize(Ty)};
+      return {{*addr,getDataLayout()->getTypeStoreSize(Ty)}};
 #else
-    return {GetSymAddr(Ptr),getDataLayout().getTypeStoreSize(Ty)};
+      return {{*addr,getDataLayout().getTypeStoreSize(Ty)}};
 #endif
-  };
+    } else {
+      return nullptr;
+    }
+  }
 //   ConstMRef GetConstMRef(void const *Ptr, Type *Ty){
 // #ifdef LLVM_EXECUTIONENGINE_DATALAYOUT_PTR
 //     return {Ptr,int(getDataLayout()->getTypeStoreSize(Ty))};
