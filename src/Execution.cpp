@@ -3060,24 +3060,42 @@ void Interpreter::callAssume(Function *F, const std::vector<GenericValue> &ArgVa
   }
 }
 
+void Interpreter::callCalloc(Function *F,
+                             const std::vector<GenericValue> &ArgVals){
+  assert(ArgVals[0].IntVal.getBitWidth() <= 64);
+  assert(ArgVals[1].IntVal.getBitWidth() <= 64);
+  uint64_t no = ArgVals[0].IntVal.getLimitedValue();
+  uint64_t esz = ArgVals[1].IntVal.getLimitedValue();
+  size_t sz = no * esz;
+  assert(sz / esz == no); // Overflow check
+  GenericValue Result = doMalloc(sz);
+  assert(!DryRun);
+  if (Result.PointerVal)
+    memset(Result.PointerVal, 0, sz);
+  returnValueToCaller(F->getReturnType(),Result);
+}
+
 void Interpreter::callMalloc(Function *F,
                              const std::vector<GenericValue> &ArgVals){
+  assert(ArgVals[0].IntVal.getBitWidth() <= 64);
+  uint64_t sz = ArgVals[0].IntVal.getLimitedValue();
+  GenericValue Result = doMalloc(sz);
+  returnValueToCaller(F->getReturnType(),Result);
+}
+
+GenericValue Interpreter::doMalloc(uint64_t sz){
+  GenericValue Result;
   if(conf.malloc_may_fail) TB.register_alternatives(2);
   if(conf.malloc_may_fail && CurrentAlt == 0){
-    GenericValue Result;
     Result.PointerVal = 0; // Return null
-    returnValueToCaller(F->getReturnType(),Result);
   }else{// else call as usual
-    GenericValue Result;
-    assert(ArgVals[0].IntVal.getBitWidth() <= 64);
-    uint64_t sz = ArgVals[0].IntVal.getLimitedValue();
     void *Memory = malloc(sz);
     Result.PointerVal = Memory;
     AllocatedMemHeap.insert(Result.PointerVal);
     SymMBlock mb = SymMBlock::Heap(CurrentThread, HeapAllocCount[CurrentThread]++);
     AllocatedMem.emplace(Memory, SymMBlockSize(std::move(mb), sz));
-    returnValueToCaller(F->getReturnType(),Result);
   }
+  return Result;
 }
 
 void Interpreter::callFree(Function *F,
@@ -3173,6 +3191,9 @@ void Interpreter::callFunction(Function *F,
     return;
   }else if(F->getName().str() == "malloc"){
     callMalloc(F,ArgVals);
+    return;
+  }else if(F->getName().str() == "calloc"){
+    callCalloc(F,ArgVals);
     return;
   }else if(F->getName().str() == "free"){
     callFree(F,ArgVals);

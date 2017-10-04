@@ -592,6 +592,8 @@ protected:  // Helper functions
   virtual void callNondetInt(Function *F, const std::vector<GenericValue> &ArgVals);
   virtual void callAssume(Function *F, const std::vector<GenericValue> &ArgVals);
   virtual void callMalloc(Function *F, const std::vector<GenericValue> &ArgVals);
+  virtual void callCalloc(Function *F, const std::vector<GenericValue> &ArgVals);
+  virtual GenericValue doMalloc(uint64_t Size);
   virtual void callFree(Function *F, const std::vector<GenericValue> &ArgVals);
   virtual void callAssertFail(Function *F, const std::vector<GenericValue> &ArgVals);
   virtual void callAtexit(Function *F, const std::vector<GenericValue> &ArgVals);
