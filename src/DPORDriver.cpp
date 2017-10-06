@@ -233,6 +233,10 @@ DPORDriver::Result DPORDriver::run(){
                    << esc << "[s" // Save cursor position
                    << esc << "[K" // Erase the line
                    << "Computation #" << computation_count+1;
+      if(res.sleepset_blocked_trace_count)
+        llvm::dbgs() << " (" << res.sleepset_blocked_trace_count << " ssb)";
+      if(res.assume_blocked_trace_count)
+        llvm::dbgs() << " (" << res.assume_blocked_trace_count << " ab)";
       if(conf.print_progress_estimate){
         llvm::dbgs() << " ("
                      << int(100.0*float(computation_count+1)/float(estimate))
