@@ -64,8 +64,8 @@ public:
   public:
     /* Empty result */
     Result() : trace_count(0), sleepset_blocked_trace_count(0),
-               unobserved_writes(0), unobserved_traces(0),
-               error_trace(0) {};
+               assume_blocked_trace_count(0), unobserved_writes(0),
+               unobserved_traces(0), error_trace(0) {};
     ~Result(){
       if(all_traces.empty()){ // Otherwise error_trace also appears in all_traces.
         delete error_trace;
@@ -78,6 +78,8 @@ public:
     int trace_count;
     /* The number of explored sleepset-blocked traces */
     int sleepset_blocked_trace_count;
+    /* The number of explored assume-blocked traces */
+    int assume_blocked_trace_count;
     /* The total number of unobserved writes */
     int unobserved_writes;
     /* The number of traces that contained unobserved writes */
@@ -114,7 +116,7 @@ private:
   std::string src;
 
   DPORDriver(const Configuration &conf);
-  Trace *run_once(TraceBuilder &TB) const;
+  std::pair<Trace*,bool> run_once(TraceBuilder &TB) const;
   void reparse();
   /* Opens and reads the file filename. Stores the entire content in
    * tgt. Throws an exception on failure.

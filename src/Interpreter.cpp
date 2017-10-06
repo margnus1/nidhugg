@@ -111,6 +111,7 @@ Interpreter::Interpreter(Module *M, TSOPSOTraceBuilder &TB,
   Threads.push_back(Thread());
   Threads.back().cpid = CPid();
   CurrentThread = 0;
+  AssumeBlocked = false;
   AtomicFunctionCall = -1;
   memset(&ExitValue.Untyped, 0, sizeof(ExitValue.Untyped));
 #ifdef LLVM_EXECUTIONENGINE_DATALAYOUT_PTR

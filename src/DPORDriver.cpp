@@ -148,20 +148,23 @@ llvm::ExecutionEngine *DPORDriver::create_execution_engine(TraceBuilder &TB, con
   return EE;
 }
 
-Trace *DPORDriver::run_once(TraceBuilder &TB) const{
-  std::shared_ptr<llvm::ExecutionEngine> EE(create_execution_engine(TB,conf));
+std::pair<Trace*,bool> DPORDriver::run_once(TraceBuilder &TB) const{
+  bool assume_blocked;
+  {
+    std::unique_ptr<llvm::ExecutionEngine> EE(create_execution_engine(TB,conf));
 
-  // Run main.
-  EE->runFunctionAsMain(mod->getFunction("main"), conf.argv, 0);
+    // Run main.
+    EE->runFunctionAsMain(mod->getFunction("main"), conf.argv, 0);
 
-  // Run static destructors.
-  EE->runStaticConstructorsDestructors(true);
+    // Run static destructors.
+    EE->runStaticConstructorsDestructors(true);
 
-  if(conf.check_robustness){
-    static_cast<llvm::Interpreter*>(EE.get())->checkForCycles();
+    if(conf.check_robustness){
+      static_cast<llvm::Interpreter*>(EE.get())->checkForCycles();
+    }
+
+    assume_blocked = static_cast<llvm::Interpreter*>(EE.get())->assumeBlocked();
   }
-
-  EE.reset();
 
   Trace *t = 0;
   if(TB.has_error() || conf.debug_collect_all_traces){
@@ -184,7 +187,7 @@ Trace *DPORDriver::run_once(TraceBuilder &TB) const{
     }
   }// else avoid computing trace
 
-  return t;
+  return {t, assume_blocked};
 }
 
 DPORDriver::Result DPORDriver::run(){
@@ -240,14 +243,16 @@ DPORDriver::Result DPORDriver::run(){
     if((computation_count+1) % 1000 == 0){
       reparse();
     }
-    Trace *t = run_once(*TB);
-    bool t_used = false;
+    Trace *t;
+    bool assume_blocked, t_used = false;
+    std::tie(t, assume_blocked) = run_once(*TB);
     if(t && conf.debug_collect_all_traces){
       res.all_traces.push_back(t);
       t_used = true;
     }
-    if(TB->sleepset_is_empty()){
+    if(TB->sleepset_is_empty()) {
       ++res.trace_count;
+      if(assume_blocked) ++res.assume_blocked_trace_count;
     }else{
       ++res.sleepset_blocked_trace_count;
     }

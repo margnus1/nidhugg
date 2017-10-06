@@ -172,6 +172,9 @@ protected:
    * DryRun is assigned by the scheduling by TB.
    */
   bool DryRun;
+  /* True if we have executed a false assume statement
+   */
+  bool AssumeBlocked;
   /* Keeps temporary changes to memory which are performed during dry
    * runs. Instead of changing the actual memory, during dry runs all
    * memory stores collected in DryRunMem. This allows memory loads
@@ -298,6 +301,8 @@ public:
    * Call this method only at the end of execution.
    */
   virtual bool checkForCycles() const { return TB.check_for_cycles(); };
+
+  bool assumeBlocked() const { return AssumeBlocked; }
 
   /// runAtExitHandlers - Run any functions registered by the program's calls to
   /// atexit(3), which we intercept and store in AtExitHandlers.

@@ -3058,6 +3058,7 @@ void Interpreter::callAssume(Function *F, const std::vector<GenericValue> &ArgVa
       }
       return;
     }
+    AssumeBlocked = true;
     ECStack()->clear();
     AtExitHandlers.clear();
     /* Do not call terminate. We don't want to explicitly terminate
