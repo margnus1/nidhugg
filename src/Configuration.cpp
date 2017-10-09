@@ -69,10 +69,10 @@ cl_dpor_algorithm(llvm::cl::NotHidden, llvm::cl::init(Configuration::SOURCE),
                                  ));
 
 static llvm::cl::opt<Configuration::SchedulingAlgorithm>
-cl_scheduling_algorithm(llvm::cl::NotHidden, llvm::cl::init(Configuration::ROUND_ROBIN),
+cl_scheduling_algorithm(llvm::cl::NotHidden, llvm::cl::init(Configuration::OLDEST_FIRST),
                         llvm::cl::desc("Select DPOR algorithm"),
-                        llvm::cl::values(clEnumValN(Configuration::ROUND_ROBIN,"round-robin","Round Robin (default)"),
-                                         clEnumValN(Configuration::OLDEST_FIRST,"oldest-first","Oldest first")
+                        llvm::cl::values(clEnumValN(Configuration::ROUND_ROBIN,"round-robin","Round Robin"),
+                                         clEnumValN(Configuration::OLDEST_FIRST,"oldest-first","Oldest first (default)")
 #ifdef LLVM_CL_VALUES_USES_SENTINEL
                                         ,clEnumValEnd
 #endif

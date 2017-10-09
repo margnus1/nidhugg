@@ -58,7 +58,7 @@ public:
     max_search_depth = -1;
     memory_model = MM_UNDEF;
     dpor_algorithm = SOURCE;
-    scheduling_algorithm = ROUND_ROBIN;
+    scheduling_algorithm = OLDEST_FIRST;
     extfun_no_fence = {
       "pthread_self",
       "malloc",
