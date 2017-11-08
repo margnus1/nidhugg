@@ -28,6 +28,7 @@ libnidhugg_a_SOURCES = \
   StrModule.cpp StrModule.h \
   Trace.cpp Trace.h \
   TraceBuilder.cpp TraceBuilder.h \
+  TraceDumper.cpp TraceDumper.h \
   Transform.cpp Transform.h \
   TSOInterpreter.cpp TSOInterpreter.h \
   TSOPSOTraceBuilder.h \
