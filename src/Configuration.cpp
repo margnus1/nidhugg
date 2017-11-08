@@ -89,6 +89,11 @@ static llvm::cl::opt<std::string> cl_dump_traces
  llvm::cl::value_desc("FILE"),
  llvm::cl::desc("Write graph of explored equivalence classes to FILE."));
 
+static llvm::cl::opt<std::string> cl_dump_tree
+("dump-tree",llvm::cl::NotHidden,llvm::cl::cat(cl_dump_cat),
+ llvm::cl::value_desc("FILE"),
+ llvm::cl::desc("Write graph of exploration tree to FILE."));
+
 const std::set<std::string> &Configuration::commandline_opts(){
   static std::set<std::string> opts = {
     "dpor-explore-all",
@@ -103,6 +108,7 @@ const std::set<std::string> &Configuration::commandline_opts(){
     "print-progress",
     "print-progress-estimate",
     "dump-traces",
+    "dump-tree",
   };
   return opts;
 }
@@ -125,6 +131,8 @@ void Configuration::assign_by_commandline(){
   print_progress_estimate = cl_print_progress_estimate;
   trace_dump_file = cl_dump_traces;
   debug_collect_all_traces |= !cl_dump_traces.empty();
+  tree_dump_file = cl_dump_tree;
+  debug_collect_all_traces |= !cl_dump_tree.empty();
   argv.resize(1);
   argv[0] = get_default_program_name();
   for(std::string a : cl_program_arguments){
