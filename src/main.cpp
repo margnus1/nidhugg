@@ -115,11 +115,6 @@ int main(int argc, char *argv[]){
       std::cout << " (also " << res.assume_blocked_trace_count
                 << " assume blocked)";
       std::cout << std::endl;
-      if (res.unobserved_writes) {
-        std::cout << "Unobserved writes: " << res.unobserved_writes
-                  << " (in " << res.unobserved_traces
-                  << " traces)" << std::endl;
-      }
       if(res.has_errors()){
         errors_detected = true;
         std::cout << "\n Error detected:\n"
