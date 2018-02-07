@@ -1415,6 +1415,8 @@ void Interpreter::visitAtomicCmpXchgInst(AtomicCmpXchgInst &I){
   GenericValue Result;
 
   SymAddrSize Ptr_sas = GetSymAddrSize(Ptr,Ty);
+  SymData::block_type expected = SymData::alloc_block(Ptr_sas.size);
+  StoreValueToMemory(CmpVal,static_cast<GenericValue*>((void*)expected.get()),Ty);
 
 #if defined(LLVM_CMPXCHG_SEPARATE_SUCCESS_FAILURE_ORDERING)
   // Return a tuple (oldval,success)
@@ -1434,9 +1436,9 @@ void Interpreter::visitAtomicCmpXchgInst(AtomicCmpXchgInst &I){
   }
   GenericValue CmpRes = executeICMP_EQ(Result,CmpVal,Ty);
 #endif
+  SymData sd = GetSymData(Ptr_sas,Ty,NewVal);
+  TB.compare_exchange(sd, expected, CmpRes.IntVal.getBoolValue());
   if(CmpRes.IntVal.getBoolValue()){
-    SymData sd = GetSymData(Ptr_sas,Ty,NewVal);
-    TB.atomic_store(sd);
 #if defined(LLVM_CMPXCHG_SEPARATE_SUCCESS_FAILURE_ORDERING)
     Result.AggregateVal[1].IntVal = 1;
 #endif
@@ -1447,7 +1449,6 @@ void Interpreter::visitAtomicCmpXchgInst(AtomicCmpXchgInst &I){
     }
     CheckedStoreValueToMemory(NewVal,Ptr,Ty);
   }else{
-    TB.load(Ptr_sas);
 #if defined(LLVM_CMPXCHG_SEPARATE_SUCCESS_FAILURE_ORDERING)
     Result.AggregateVal[1].IntVal = 0;
 #endif
