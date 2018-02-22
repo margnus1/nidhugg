@@ -1360,13 +1360,7 @@ TSOTraceBuilder::obs_sleep_at(int i) const{
   for(int j = 0;; ++j){
     obs_sleep_add(sleep, prefix[j]);
     if (j == i) break;
-    sym_ty sym = prefix[j].sym;
-    /* A tricky part to this is that we must clear observers from the events
-     * we use to wake */
-    clear_observed(sym);
-    obs_wake_res res =
-      obs_sleep_wake(sleep, prefix[j].iid.get_pid(), sym);
-    assert(res != obs_wake_res::BLOCK);
+    obs_sleep_wake(sleep, prefix[j]);
     iid_map_step(iid_map, prefix.branch(j));
   }
 
@@ -1377,6 +1371,21 @@ void TSOTraceBuilder::obs_sleep_add(struct obs_sleep &sleep,
                                     const Event &e) const{
   for (int k = 0; k < e.sleep.size(); ++k){
     sleep.sleep[e.sleep[k]] = {&e.sleep_evs[k], nullptr};
+  }
+}
+
+void
+TSOTraceBuilder::obs_sleep_wake(struct obs_sleep &sleep, const Event &e) const{
+  if (!conf.observers) {
+    for (IPid p : e.wakeup) sleep.sleep.erase(p);
+  } else {
+    sym_ty sym = e.sym;
+    /* A tricky part to this is that we must clear observers from the events
+     * we use to wake */
+    clear_observed(sym);
+    obs_wake_res res =
+      obs_sleep_wake(sleep, e.iid.get_pid(), sym);
+    assert(res != obs_wake_res::BLOCK);
   }
 }
 
@@ -1429,8 +1438,11 @@ TSOTraceBuilder::obs_sleep_wake(struct obs_sleep &sleep,
         }
       }
     }
-    if (symev_does_load(e)) {
-      /* Now check for readers */
+    /* Now check for readers */
+    if (e.kind == SymEv::FULLMEM) {
+      /* Reads all; observes all */
+      sleep.must_read.clear();
+    } else if (symev_does_load(e)) {
       const SymAddrSize &esas = e.addr();
       for (int i = 0; i < int(sleep.must_read.size());) {
         if (sleep.must_read[i].overlaps(esas)) {
@@ -1835,14 +1847,14 @@ void TSOTraceBuilder::do_race_detect() {
   }
 
   /* Do race detection */
-  std::map<IPid,const sym_ty*> sleep;
+  struct obs_sleep sleep;
   for (unsigned i = 0; i < races.size(); ++i){
-    sym_sleep_set_add(sleep, prefix[i]);
+    obs_sleep_add(sleep, prefix[i]);
     for (const Race *race : races[i]) {
       assert(race->first_event == int(i));
-      race_detect(*race, (const std::map<IPid,const sym_ty*>&)sleep);
+      race_detect(*race, (const struct obs_sleep&)sleep);
     }
-    sym_sleep_set_wake(sleep, prefix[i]);
+    obs_sleep_wake(sleep, prefix[i]);
   }
 
   for (unsigned i = 0; i < prefix.len(); ++i) prefix[i].races.clear();
@@ -1850,7 +1862,7 @@ void TSOTraceBuilder::do_race_detect() {
 }
 
 void TSOTraceBuilder::race_detect
-(const Race &race, const std::map<TSOTraceBuilder::IPid,const sym_ty*> &isleep){
+(const Race &race, const struct obs_sleep &isleep){
   if (conf.dpor_algorithm == Configuration::OPTIMAL) {
     race_detect_optimal(race, isleep);
     return;
@@ -1920,7 +1932,7 @@ void TSOTraceBuilder::race_detect
       /* There is already a satisfactory candidate branch */
       return;
     }
-    if(isleep.count(cand.pid)){
+    if(isleep.sleep.count(cand.pid)){
       /* This candidate is already sleeping (has been considered) at
        * prefix[i]. */
       return;
@@ -1934,15 +1946,12 @@ void TSOTraceBuilder::race_detect
 }
 
 void TSOTraceBuilder::race_detect_optimal
-(const Race &race, const std::map<TSOTraceBuilder::IPid,const sym_ty*> &isleep_const){
+(const Race &race, const struct obs_sleep &isleep_const){
   const int i = race.first_event;
   const int j = race.second_event;
 
   /* We need a writable copy */
-  std::map<IPid,const sym_ty*> isleep;
-  struct obs_sleep osleep;
-  if (!conf.observers) isleep = isleep_const;
-  else osleep = obs_sleep_at(i);
+  struct obs_sleep isleep = isleep_const;
 
   const Event &first = prefix[i];
   Event second({-1,0});
@@ -2069,10 +2078,10 @@ void TSOTraceBuilder::race_detect_optimal
   if (!conf.observers) {
   for (auto it = v.cbegin(); it != v.cend(); ++it) {
     /* Check for redundant exploration */
-    if (isleep.count(it->pid)) {
+    if (isleep.sleep.count(it->pid)) {
       /* Latter events of this process can't be weak initials either, so to
        * save us from checking, we just delete it from isleep */
-      isleep.erase(it->pid);
+      isleep.sleep.erase(it->pid);
 
       /* Is this a weak initial of v? */
       bool initial = true;
@@ -2094,14 +2103,14 @@ void TSOTraceBuilder::race_detect_optimal
     obs_wake_res state = obs_wake_res::CONTINUE;
     for (auto it = v.cbegin(); state == obs_wake_res::CONTINUE
            && it != v.cend(); ++it) {
-      state = obs_sleep_wake(osleep, it->pid, it->sym);
+      state = obs_sleep_wake(isleep, it->pid, it->sym);
     }
     /* Redundant */
     if (state != obs_wake_res::CLEAR) return;
   }
 
   if (!conf.observers){
-  for (std::pair<IPid,const sym_ty*> pair : isleep) {
+  for (auto const &pair : isleep.sleep) {
     const Branch &sleep_br = prefix.branch(find_process_event
                                            (pair.first, iid_map[pair.first]));
     bool dependent = false;
@@ -2113,7 +2122,7 @@ void TSOTraceBuilder::race_detect_optimal
       }
       if (ve.pid == pair.first
           || do_events_conflict(ve.pid, ve.sym,
-                                pair.first, *pair.second)) {
+                                pair.first, *pair.second.sym)) {
         /* Dependent */
         dependent = true;
         break;
