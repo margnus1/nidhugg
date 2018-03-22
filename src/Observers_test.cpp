@@ -674,7 +674,7 @@ declare i32 @pthread_join(i64, i8**)
   BOOST_CHECK(DPORDriver_test::check_all_traces(res,expected,conf));
 }
 
-BOOST_AUTO_TEST_CASE(wrong_witness){
+BOOST_AUTO_TEST_CASE(wrong_witness, * boost::unit_test::disabled()){
   /* Exposes a bug where the witness of a race was incorrectly chosen as
    * an "observer" of the race that happened-after another observer.
    * Test case could probably be massively simplified.
@@ -682,6 +682,9 @@ BOOST_AUTO_TEST_CASE(wrong_witness){
    * added to fix this is commented out in
    * TSOTraceBuilder::compute_vclocks().
    */
+
+  /* This test is currently not runnable due to lack of support for
+   * atomic blocks in TSOTraceBuilder::obs_sleep. */
   Configuration conf = sc_obs_conf();
   std::string module = StrModule::portasm(R"#(
 %attr_t = type { i64, [48 x i8] }
