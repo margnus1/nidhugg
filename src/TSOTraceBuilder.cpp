@@ -313,8 +313,7 @@ bool TSOTraceBuilder::reset(){
   /* The if-statement is just so we can control which test cases need to
    *  satisfy this assertion for now. Eventually, all should.
    */
-  if (conf.dpor_algorithm == Configuration::OPTIMAL)
-  {
+  if(conf.dpor_algorithm == Configuration::OPTIMAL){
     check_symev_vclock_equiv();
   }
 #endif
@@ -408,18 +407,29 @@ std::string TSOTraceBuilder::iid_string(const Branch &branch, int index) const{
   return ss.str();
 }
 
+static std::string
+str_join(const std::vector<std::string> &vec, const std::string &sep) {
+  std::string res;
+  for (auto it = vec.begin(); it != vec.end(); ++it) {
+    if (it != vec.begin()) res += sep;
+    res += *it;
+  }
+  return res;
+}
+
 std::string TSOTraceBuilder::oslp_string(const struct obs_sleep &os) const {
-  std::string res = "{";
+  std::vector<std::string> elems;
+  auto pid_str = [this](IPid p) { return threads[p].cpid.to_string(); };
   for (const auto &pair : os.sleep) {
-    res += "," + threads[pair.first].cpid.to_string();
+    elems.push_back(threads[pair.first].cpid.to_string());
     if (pair.second.not_if_read) {
-      res += "/" + pair.second.not_if_read->to_string();
+      elems.back() += "/" + pair.second.not_if_read->to_string(pid_str);
     }
   }
   for (const SymAddrSize &sas : os.must_read) {
-    res += "," + sas.to_string([this](IPid p) { return threads[p].cpid.to_string(); });
+    elems.push_back(sas.to_string(pid_str));
   }
-  return res + "}";
+  return "{" + str_join(elems, ",") + "}";
 }
 
 /* For debug-printing the wakeup tree; adds a node and its children to lines */
@@ -442,7 +452,7 @@ void TSOTraceBuilder::wut_string_add_node
     if (l < lines.size()) offset = std::max(offset, unsigned(lines[l].size()));
   }
   if (lines.size() < l+1) lines.resize(l+1, "");
-  /* First node needs different padding, so we do it here*/
+  /* First node needs different padding, so we do it here */
   lines[line] += " ";
   while(lines[line].size() < offset) lines[line] += "-";
 
@@ -534,7 +544,7 @@ void TSOTraceBuilder::check_symev_vclock_equiv() const {
         for(unsigned k = 0; k < prefix.len(); ++k){
           IPid ipid = prefix[k].iid.get_pid();
           ix_offs = std::max(ix_offs,int(std::to_string(k).size()));
-          iid_offs = std::max(iid_offs,/*2**/ipid+int(iid_string(k).size()));
+          iid_offs = std::max(iid_offs,2*ipid+int(iid_string(k).size()));
           clock_offs = std::max(clock_offs,int(prefix[k].clock.to_string().size()));
         }
 
@@ -543,8 +553,8 @@ void TSOTraceBuilder::check_symev_vclock_equiv() const {
           llvm::dbgs() << rpad("",ix_offs-int(std::to_string(k).size()))
                        << (k == i || k == j ? ANSIRed : "") << k
                        << (k == i || k == j ? ANSIRst : "")
-                       << ":" << rpad("",2+ipid/**2*/)
-                       << rpad(iid_string(k),iid_offs-ipid/**2*/)
+                       << ":" << rpad("",2+ipid*2)
+                       << rpad(iid_string(k),iid_offs-ipid*2)
                        << " " << rpad(prefix[k].clock.to_string(),clock_offs)
                        << " " << events_to_string(prefix[k].sym)
                        << "\n";
@@ -1977,10 +1987,6 @@ void TSOTraceBuilder::race_detect_optimal
       }
     }
   }
-
-  /* TODO: Build a "partial-order heap" of v. The "mins" of the heap
-   * would be the initials.
-   */
 
   /* iid_map is a map from processes to their next event indices, and is used to
    * construct the iid of any events we see in the wakeup tree,
