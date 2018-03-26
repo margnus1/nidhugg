@@ -2001,7 +2001,6 @@ void TSOTraceBuilder::race_detect_optimal
   /* Check for redundant exploration */
   if (!conf.observers) {
     for (auto it = v.cbegin(); it != v.cend(); ++it) {
-      /* Check for redundant exploration */
       if (isleep.sleep.count(it->pid)) {
         /* Latter events of this process can't be weak initials either, so to
          * save us from checking, we just delete it from isleep */
@@ -2023,17 +2022,7 @@ void TSOTraceBuilder::race_detect_optimal
         }
       }
     }
-  } else {
-    obs_wake_res state = obs_wake_res::CONTINUE;
-    for (auto it = v.cbegin(); state == obs_wake_res::CONTINUE
-           && it != v.cend(); ++it) {
-      state = obs_sleep_wake(isleep, it->pid, it->sym);
-    }
-    /* Redundant */
-    if (state != obs_wake_res::CLEAR) return;
-  }
 
-  if (!conf.observers){
     for (auto const &pair : isleep.sleep) {
       const Branch &sleep_br = prefix.branch(find_process_event
                                              (pair.first, iid_map[pair.first]));
@@ -2056,6 +2045,14 @@ void TSOTraceBuilder::race_detect_optimal
         return;
       }
     }
+  } else {
+    obs_wake_res state = obs_wake_res::CONTINUE;
+    for (auto it = v.cbegin(); state == obs_wake_res::CONTINUE
+           && it != v.cend(); ++it) {
+      state = obs_sleep_wake(isleep, it->pid, it->sym);
+    }
+    /* Redundant */
+    if (state != obs_wake_res::CLEAR) return;
   }
 
   /* Do insertion into the wakeup tree */
@@ -2084,7 +2081,8 @@ void TSOTraceBuilder::race_detect_optimal
           if (child_sym != ve.sym) {
             /* This can happen due to observer effects. We must now make sure
              * ve.second->sym does not have any conflicts with any previous
-             * event in v; i.e. wether it actually is a weak initial of v. */
+             * event in v; i.e. wether it actually is a weak initial of v.
+             */
             for (auto pei = v.begin(); skip == NO && pei != vei; ++pei){
               const Branch &pe = *pei;
               if (do_events_conflict(ve.pid, ve.sym,
