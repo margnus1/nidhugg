@@ -631,6 +631,8 @@ protected:
    */
   void recompute_cmpxhg_success(sym_ty &es, const std::vector<Branch> &v, int i)
     const;
+  /* Recompute the observation states on the symbolic events in v. */
+  void recompute_observed(std::vector<Branch> &v) const;
   struct obs_sleep {
     struct process_state {
       const sym_ty *sym;

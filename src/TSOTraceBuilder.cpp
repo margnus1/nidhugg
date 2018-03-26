@@ -1410,6 +1410,53 @@ void TSOTraceBuilder::recompute_cmpxhg_success
   }
 }
 
+void TSOTraceBuilder::recompute_observed(std::vector<Branch> &v) const {
+  for (Branch &b : v) {
+    clear_observed(b.sym);
+  }
+
+  /* When !read_all, last_reads is the set of addresses that have been read
+   * (or "are live", if comparing to a liveness analysis).
+   * When read_all, last_reads is instead the set of addresses that have *not*
+   * been read. All addresses that are not in last_reads are read.
+   */
+  VecSet<SymAddr> last_reads;
+  bool read_all = false;
+
+  for (auto vi = v.end(); vi != v.begin();){
+    Branch &vb = *(--vi);
+    for (auto ei = vb.sym.end(); ei != vb.sym.begin();){
+      SymEv &e = *(--ei);
+      switch(e.kind){
+      case SymEv::LOAD:
+      case SymEv::CMPXHG: /* First a load, then a store */
+      case SymEv::CMPXHGFAIL:
+        if (read_all)
+          last_reads.erase (VecSet<SymAddr>(e.addr().begin(), e.addr().end()));
+        else last_reads.insert(VecSet<SymAddr>(e.addr().begin(), e.addr().end()));
+        break;
+      case SymEv::STORE:
+        assert(false); abort();
+      case SymEv::UNOBS_STORE:
+        if (read_all ^ last_reads.intersects
+            (VecSet<SymAddr>(e.addr().begin(), e.addr().end()))){
+          e = SymEv::Store(e.data());
+        }
+        if (read_all)
+          last_reads.insert(VecSet<SymAddr>(e.addr().begin(), e.addr().end()));
+        else last_reads.erase (VecSet<SymAddr>(e.addr().begin(), e.addr().end()));
+        break;
+      case SymEv::FULLMEM:
+        last_reads.clear();
+        read_all = true;
+        break;
+      default:
+        break;
+      }
+    }
+  }
+}
+
 void TSOTraceBuilder::see_events(const VecSet<int> &seen_accesses){
   for(int i : seen_accesses){
     if(i < 0) continue;
@@ -1942,50 +1989,7 @@ void TSOTraceBuilder::race_detect_optimal
 
   if (conf.observers) {
     /* Recompute observed states on events in v */
-    for (Branch &b : v) {
-      clear_observed(b.sym);
-    }
-
-    /* When !read_all, last_reads is the set of addresses that have been read
-     * (or "are live", if comparing to a liveness analysis).
-     * When read_all, last_reads is instead the set of addresses that have *not*
-     * been read. All addresses that are not in last_reads are read.
-     */
-    VecSet<SymAddr> last_reads;
-    bool read_all = false;
-
-    for (auto vi = v.end(); vi != v.begin();){
-      Branch &vb = *(--vi);
-      for (auto ei = vb.sym.end(); ei != vb.sym.begin();){
-        SymEv &e = *(--ei);
-        switch(e.kind){
-        case SymEv::LOAD:
-        case SymEv::CMPXHG: /* First a load, then a store */
-        case SymEv::CMPXHGFAIL:
-          if (read_all)
-            last_reads.erase (VecSet<SymAddr>(e.addr().begin(), e.addr().end()));
-          else last_reads.insert(VecSet<SymAddr>(e.addr().begin(), e.addr().end()));
-          break;
-        case SymEv::STORE:
-          assert(false); abort();
-        case SymEv::UNOBS_STORE:
-          if (read_all ^ last_reads.intersects
-              (VecSet<SymAddr>(e.addr().begin(), e.addr().end()))){
-            e = SymEv::Store(e.data());
-          }
-          if (read_all)
-            last_reads.insert(VecSet<SymAddr>(e.addr().begin(), e.addr().end()));
-          else last_reads.erase (VecSet<SymAddr>(e.addr().begin(), e.addr().end()));
-          break;
-        case SymEv::FULLMEM:
-          last_reads.clear();
-          read_all = true;
-          break;
-        default:
-          break;
-        }
-      }
-    }
+    recompute_observed(v);
   }
 
   /* iid_map is a map from processes to their next event indices, and is used to
