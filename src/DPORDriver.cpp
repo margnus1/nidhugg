@@ -248,6 +248,7 @@ DPORDriver::Result DPORDriver::run(){
     }
     if(TB->sleepset_is_empty()){
       ++res.trace_count;
+      res.weak_traces.emplace(TB->get_weak_trace());
     }else{
       ++res.sleepset_blocked_trace_count;
     }

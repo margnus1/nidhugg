@@ -57,6 +57,7 @@ public:
   virtual bool has_error() const { return errors.size(); };
   /* Compute the Trace of the current execution. */
   virtual Trace *get_trace() const = 0;
+  virtual WeakTrace get_weak_trace() const { throw std::logic_error("Not implemented"); }
   /* Notify the TraceBuilder that the current execution has terminated.
    *
    * The TraceBuilder will reset, and based on observed conflicts and

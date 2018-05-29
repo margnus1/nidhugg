@@ -92,6 +92,9 @@ public:
      * intended usage.
      */
     std::vector<Trace*> all_traces;
+
+    /* Contains all weak traces that were explored. */
+    std::set<WeakTrace> weak_traces;
   };
 
   /* Explore the traces of the given module, and return the result.

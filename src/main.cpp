@@ -108,6 +108,7 @@ int main(int argc, char *argv[]){
       std::cout << "Trace count: " << res.trace_count
                 << " (also " << res.sleepset_blocked_trace_count
                 << " sleepset blocked)" << std::endl;
+      std::cout << "Weak traces: " << res.weak_traces.size() << std::endl;
       if(res.has_errors()){
         errors_detected = true;
         std::cout << "\n Error detected:\n"

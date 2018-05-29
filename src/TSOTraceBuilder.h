@@ -43,6 +43,7 @@ public:
   virtual bool sleepset_is_empty() const;
   virtual bool check_for_cycles();
   virtual Trace *get_trace() const;
+  virtual WeakTrace get_weak_trace() const;
   virtual bool reset();
   virtual IID<CPid> get_iid() const;
 
@@ -72,6 +73,7 @@ public:
   virtual void register_alternatives(int alt_count);
   virtual int estimate_trace_count() const;
 protected:
+  IID<CPid> get_iid(unsigned index) const;
   /* An identifier for a thread. An index into this->threads.
    *
    * Even indexes are for real threads. Odd indexes i are for
@@ -442,6 +444,8 @@ protected:
    * events that are determined in advance to be executed.
    */
   WakeupTreeExplorationBuffer<Branch, Event> prefix;
+
+  WeakTrace weak_trace;
 
   /* The number of threads that have been dry run since the last
    * non-dry run event was scheduled.

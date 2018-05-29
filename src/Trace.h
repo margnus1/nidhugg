@@ -218,5 +218,6 @@ protected:
   std::vector<const llvm::MDNode*> computation_md;
 };
 
+typedef std::map<IID<CPid>,IID<CPid>> WeakTrace;
 
 #endif

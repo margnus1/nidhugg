@@ -288,6 +288,10 @@ Trace *TSOTraceBuilder::get_trace() const{
   return t;
 }
 
+WeakTrace TSOTraceBuilder::get_weak_trace() const{
+  return std::move(weak_trace);
+}
+
 bool TSOTraceBuilder::reset(){
   if(conf.debug_print_on_reset){
     llvm::dbgs() << " === TSOTraceBuilder reset ===\n";
@@ -354,6 +358,7 @@ bool TSOTraceBuilder::reset(){
   mutexes.clear();
   cond_vars.clear();
   mem.clear();
+  weak_trace.clear();
   last_full_memory_conflict = -1;
   prefix_idx = -1;
   dryrun = false;
@@ -366,8 +371,12 @@ bool TSOTraceBuilder::reset(){
 }
 
 IID<CPid> TSOTraceBuilder::get_iid() const{
-  IPid pid = curev().iid.get_pid();
-  int idx = curev().iid.get_index();
+  return get_iid(prefix_idx);
+}
+
+IID<CPid> TSOTraceBuilder::get_iid(unsigned index) const{
+  IPid pid = prefix[index].iid.get_pid();
+  int idx = prefix[index].iid.get_index();
   return IID<CPid>(threads[pid].cpid,idx);
 }
 
@@ -758,6 +767,7 @@ void TSOTraceBuilder::do_load(const SymAddrSize &ml){
   for(int i = int(threads[ipid].store_buffer.size())-1; 0 <= i; --i){
     if(threads[ipid].store_buffer[i].ml.addr == ml.addr){
       /* ROWE */
+      weak_trace.emplace(get_iid(), get_iid(threads[ipid].store_buffer[i].store_event));
       threads[ipid].store_buffer[i].last_rowe = prefix_idx;
       return;
     }
@@ -775,6 +785,7 @@ void TSOTraceBuilder::do_load(const SymAddrSize &ml){
       if(lu_tipid == ipid && ml != lu_ml && lu != prefix_idx){
         add_happens_after(prefix_idx, lu);
       }
+      weak_trace.emplace(get_iid(), get_iid(lu));
     }
     do_load(mem[b]);
 
