@@ -315,6 +315,7 @@ bool PSOTraceBuilder::reset(){
   mutexes.clear();
   cond_vars.clear();
   mem.clear();
+  weak_trace.clear();
   last_full_memory_conflict = -1;
   prefix_idx = -1;
   dryrun = false;
@@ -331,6 +332,10 @@ bool PSOTraceBuilder::reset(){
 }
 
 IID<CPid> PSOTraceBuilder::get_iid() const{
+  return get_iid(prefix_idx);
+}
+
+IID<CPid> PSOTraceBuilder::get_iid(unsigned index) const{
   IPid pid = curnode().iid.get_pid();
   int idx = curnode().iid.get_index();
   return IID<CPid>(threads[pid].cpid,idx);
@@ -418,7 +423,7 @@ void PSOTraceBuilder::store(const SymData &sd){
   const SymAddrSize &ml = sd.get_ref();
   IPid ipid = curnode().iid.get_pid();
   for(SymAddr b : ml){
-    threads[ipid].store_buffers[b].push_back(PendingStoreByte(ml,threads[ipid].clock,last_md));
+    threads[ipid].store_buffers[b].push_back(PendingStoreByte(ml,threads[ipid].clock,prefix_idx,last_md));
   }
   IPid upd_ipid;
   auto it = threads[ipid].byte_to_aux.find(ml.addr);
@@ -558,6 +563,7 @@ void PSOTraceBuilder::load(const SymAddrSize &ml){
       std::vector<PendingStoreByte> &sb = it->second;
       assert(sb.size());
       assert(sb.back().ml == ml);
+      weak_trace.emplace(get_iid(), get_iid(sb.back().store_event));
       sb.back().last_rowe = prefix_idx;
       return;
     }
@@ -583,6 +589,7 @@ void PSOTraceBuilder::load(const SymAddrSize &ml){
         curnode().clock += clk;
         threads[ipid].clock += clk;
       }
+      weak_trace.emplace(get_iid(), get_iid(lu));
     }
   }
 

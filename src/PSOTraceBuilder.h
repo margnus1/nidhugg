@@ -38,6 +38,9 @@ public:
   virtual bool sleepset_is_empty() const;
   virtual bool check_for_cycles();
   virtual Trace *get_trace() const;
+  virtual WeakTrace get_weak_trace() const{
+    return std::move(weak_trace);
+  };
   virtual bool reset();
   virtual IID<CPid> get_iid() const;
 
@@ -67,6 +70,8 @@ public:
   virtual void register_alternatives(int alt_count);
   virtual int estimate_trace_count() const;
 protected:
+  virtual IID<CPid> get_iid(unsigned index) const;
+
   /* An identifier for a thread. An index into this->threads.
    *
    * Even indexes are for real threads. Odd indexes i are for
@@ -101,14 +106,16 @@ protected:
   /* A byte of a store pending in a store buffer. */
   class PendingStoreByte{
   public:
-    PendingStoreByte(const SymAddrSize &ml, const VClock<IPid> &clk, const llvm::MDNode *md)
-      : ml(ml), clock(clk), last_rowe(-1), md(md) {};
+    PendingStoreByte(const SymAddrSize &ml, const VClock<IPid> &clk, unsigned store_event, const llvm::MDNode *md)
+      : ml(ml), clock(clk), store_event(store_event), last_rowe(-1), md(md) {};
     /* The memory location that is being written to. */
     SymAddrSize ml;
     /* The clock of the store event which produced this store buffer
      * entry.
      */
     VClock<IPid> clock;
+    /* The event that produced this store buffer entry. */
+    unsigned store_event;
     /* An index into prefix to the event of the last load that fetched
      * its value from this store buffer entry by Read-Own-Write-Early.
      *
@@ -395,6 +402,8 @@ protected:
    * events that are determined in advance to be executed.
    */
   std::vector<Event> prefix;
+
+  WeakTrace weak_trace;
 
   /* The number of threads that have been dry run since the last
    * non-dry run event was scheduled.
