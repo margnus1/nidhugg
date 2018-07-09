@@ -99,6 +99,10 @@ static llvm::cl::opt<bool> cl_debug_print_on_reset
 ("debug-print-on-reset",llvm::cl::Hidden,
  llvm::cl::desc("Print debug info after exploring each trace."));
 
+static llvm::cl::opt<bool> cl_weak_mutex_order
+("weak-mutex-order", llvm::cl::NotHidden,
+ llvm::cl::desc("Do not consider mutex aquisition order in weak traces"));
+
 const std::set<std::string> &Configuration::commandline_opts(){
   static std::set<std::string> opts = {
     "dpor-explore-all",
@@ -137,6 +141,7 @@ void Configuration::assign_by_commandline(){
   print_progress = cl_print_progress || cl_print_progress_estimate;
   print_progress_estimate = cl_print_progress_estimate;
   debug_print_on_reset = cl_debug_print_on_reset;
+  count_mutex_order = !cl_weak_mutex_order;
   argv.resize(1);
   argv[0] = get_default_program_name();
   for(std::string a : cl_program_arguments){

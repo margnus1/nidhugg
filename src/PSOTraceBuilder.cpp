@@ -681,6 +681,8 @@ void PSOTraceBuilder::mutex_lock(const SymAddrSize &ml){
     }
     curnode().clock += prefix[mutex.last_access].clock;
     threads[ipid].clock += prefix[mutex.last_access].clock;
+    if (conf.count_mutex_order)
+      weak_trace.emplace(get_iid(), get_iid(mutex.last_lock));
     see_events({last_full_memory_conflict});
   }
 
@@ -739,11 +741,15 @@ void PSOTraceBuilder::mutex_trylock(const SymAddrSize &ml){
   Mutex &mutex = mutexes[ml.addr];
   see_events({mutex.last_access,last_full_memory_conflict});
 
-  mutex.last_access = prefix_idx;
   if(!mutex.locked){ // Mutex is free
+    if (mutex.last_access >= 0 && conf.count_mutex_order)
+      weak_trace.emplace(get_iid(), get_iid(mutex.last_access));
     mutex.last_lock = prefix_idx;
     mutex.locked = true;
+  } else if (mutex.last_lock >= 0) {
+    weak_trace.emplace(get_iid(), get_iid(mutex.last_lock));
   }
+  mutex.last_access = prefix_idx;
 }
 
 void PSOTraceBuilder::mutex_init(const SymAddrSize &ml){

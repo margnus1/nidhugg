@@ -88,6 +88,7 @@ public:
     debug_print_on_error = false;
     transform_spin_assume = true;
     transform_loop_unroll = -1;
+    count_mutex_order = true;
     print_progress = false;
     print_progress_estimate = false;
     argv.push_back(get_default_program_name());
@@ -177,6 +178,10 @@ public:
    * transform_loop_unroll.
    */
   int transform_loop_unroll;
+  /* Whether to consider a total order on all mutex accesses part of counted
+   * weak traces.
+   */
+  bool count_mutex_order;
   /* If set, DPORDriver will continually print its progress to stdout. */
   bool print_progress;
   /* If set and print_progress is set, DPORDriver will together with
