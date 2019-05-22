@@ -30,7 +30,7 @@
 
 #include <set>
 
-void CheckModule::check_functions(const llvm::Module *M){
+void CheckModule::check_functions(const llvm::Module *M, bool allow_atomic){
   check_pthread_create(M);
   check_pthread_join(M);
   check_pthread_self(M);
@@ -69,6 +69,11 @@ void CheckModule::check_functions(const llvm::Module *M){
        supported.count(it->getName()) == 0){
       Debug::warn("CheckModule:"+it->getName().str())
         << "WARNING: Unsupported pthread function: " << it->getName() << "\n";
+    }
+
+    if(!allow_atomic && it->getName().startswith("__VERIFIER_atomic")){
+      throw CheckModuleError
+        ("__VERIFIER_atomic functions are not supported in this mode");
     }
   }
 }

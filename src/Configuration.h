@@ -102,6 +102,11 @@ public:
    */
   void check_commandline();
 
+  /* Returns whether the current configuration can support checking
+   * programs with atomic blocks
+   */
+  bool supports_atomic() const;
+
   /* Should analysis continue, even when an error was discovered,
    * until all traces have been explored?
    */

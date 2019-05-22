@@ -55,7 +55,7 @@ namespace CheckModule {
    * expected signatures of external functions that require special
    * support. (E.g. pthread_* functions, __VERIFIER_* functions, etc.)
    */
-  void check_functions(const llvm::Module *M);
+  void check_functions(const llvm::Module *M, bool allow_atomic);
 
   /* Same check as check_functions, but only for individual functions.
    */

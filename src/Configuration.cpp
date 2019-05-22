@@ -250,3 +250,8 @@ void Configuration::check_commandline(){
       << " Bugs might be missed or cause nondeterminism.\n";
   }
 }
+
+bool Configuration::supports_atomic() const {
+  return dpor_algorithm == SOURCE &&
+    (memory_model == SC || memory_model == TSO || memory_model == PSO);
+}

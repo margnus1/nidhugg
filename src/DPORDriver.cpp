@@ -57,7 +57,7 @@ DPORDriver *DPORDriver::parseIRFile(const std::string &filename,
     new DPORDriver(C);
   read_file(filename,driver->src);
   driver->reparse();
-  CheckModule::check_functions(driver->mod);
+  CheckModule::check_functions(driver->mod, C.supports_atomic());
   return driver;
 }
 
@@ -67,7 +67,7 @@ DPORDriver *DPORDriver::parseIR(const std::string &llvm_asm,
     new DPORDriver(C);
   driver->src = llvm_asm;
   driver->reparse();
-  CheckModule::check_functions(driver->mod);
+  CheckModule::check_functions(driver->mod, C.supports_atomic());
   return driver;
 }
 
