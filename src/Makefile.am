@@ -5,6 +5,7 @@ libnidhugg_a_SOURCES = \
   AddLibPass.cpp AddLibPass.h \
   BVClock.cpp BVClock.h \
   CheckModule.cpp CheckModule.h \
+  CommandLineOptions.cpp CommandLineOptions.h \
   Configuration.cpp Configuration.h \
   CPid.cpp CPid.h \
   Debug.cpp Debug.h \

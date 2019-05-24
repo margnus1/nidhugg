@@ -20,6 +20,7 @@
 #include <config.h>
 
 #include "Configuration.h"
+#include "CommandLineOptions.h"
 #include "DPORDriver.h"
 #include "GlobalContext.h"
 #include "Transform.h"
@@ -31,20 +32,10 @@
 #include <set>
 #include <stdexcept>
 
-llvm::cl::opt<std::string>
-cl_transform("transform",llvm::cl::init(""),
-             llvm::cl::desc("Transform the input module and store it (as LLVM assembly) to OUTFILE."),
-             llvm::cl::NotHidden,llvm::cl::value_desc("OUTFILE"));
-
-llvm::cl::opt<std::string>
+static llvm::cl::opt<std::string>
 cl_input_file(llvm::cl::desc("<input bitcode or assembly>"),
               llvm::cl::Positional,
               llvm::cl::init("-"));
-
-llvm::cl::list<std::string>
-cl_program_arguments(llvm::cl::desc("[-- <program arguments>...]"),
-                     llvm::cl::Positional,
-                     llvm::cl::ZeroOrMore);
 
 #ifdef LLVM_CL_VERSIONPRINTER_TAKES_RAW_OSTREAM
 void print_version(llvm::raw_ostream &out){

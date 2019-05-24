@@ -18,13 +18,8 @@
  */
 
 #include "Configuration.h"
-
-#include <llvm/Support/CommandLine.h>
+#include "CommandLineOptions.h"
 #include "Debug.h"
-
-extern llvm::cl::list<std::string> cl_program_arguments;
-
-extern llvm::cl::opt<std::string> cl_transform;
 
 static llvm::cl::opt<bool> cl_explore_all("explore-all",llvm::cl::NotHidden,
                                           llvm::cl::desc("Continue exploring all traces, "
