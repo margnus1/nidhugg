@@ -61,6 +61,8 @@ public:
   virtual void compare_exchange
   (const SymData &sd, const SymData::block_type expected, bool success);
   virtual void load(const SymAddrSize &ml);
+  virtual void load_await(const SymAddrSize &ml, AwaitCond cond) override;
+  virtual void load_await_fail(const SymAddrSize &ml, AwaitCond cond) override;
   virtual void full_memory_conflict();
   virtual void fence();
   virtual void join(int tgt_proc);
@@ -253,6 +255,10 @@ protected:
 
   /* All currently deadlocked threads */
   boost::container::flat_map<SymAddr, std::vector<IPid>> mutex_deadlocks;
+
+  /* All currently blocking await statements */
+  boost::container::flat_map
+  <SymAddrSize, boost::container::flat_map<IPid, AwaitCond>> blocking_awaits;
 
   /* Information about a (short) sequence of consecutive events by the
    * same thread. At most one event in the sequence may have conflicts
@@ -447,6 +453,10 @@ protected:
    * vector clocks.
    */
   bool can_rf_by_vclocks(int r, int ow, int w) const;
+  /* Check whether a read-from is allowed by the readers await condition
+   * (if any).
+   */
+  bool rf_satisfies_cond(int r, int w) const;
   /* Assuming that r and w are RMW, that r immediately preceeds w in
    * coherence order, checks whether swapping r and w is possible
    * according to the vector clocks.

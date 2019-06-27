@@ -25,7 +25,7 @@
 #include <llvm/Support/raw_ostream.h>
 
 #include "MRef.h"
-#include "SymAddr.h"
+#include "AwaitCond.h"
 
 /* Symbolic representation of an event */
 struct SymEv {
@@ -36,6 +36,7 @@ struct SymEv {
     NONDET,
 
     LOAD,
+    LOAD_AWAIT,
     STORE,
     FULLMEM, /* Observe & clobber everything */
 
@@ -72,6 +73,7 @@ struct SymEv {
     arg(int num) : num(num) {}
     // ~arg_union() {}
   } arg;
+  AwaitCond::Op _await_op;
   SymData::block_type _expected, _written;
 
   SymEv() : kind(NONE) {};
@@ -79,6 +81,9 @@ struct SymEv {
   static SymEv Nondet(int count) { return {NONDET, count}; }
 
   static SymEv Load(SymAddrSize addr) { return {LOAD, addr}; }
+  static SymEv LoadAwait(SymAddrSize addr, AwaitCond cond) {
+    return {LOAD_AWAIT, addr, std::move(cond)};
+  }
   static SymEv Store(SymData addr) { return {STORE, std::move(addr)}; }
   static SymEv Rmw(SymData addr) { return {RMW, std::move(addr)}; }
   static SymEv CmpXhg(SymData addr, SymData::block_type expected) {
@@ -121,6 +126,7 @@ struct SymEv {
   bool has_num() const;
   bool has_data() const;
   bool has_expected() const;
+  bool has_cond() const { return kind == LOAD_AWAIT; };
   bool empty() const { return kind == NONE; }
   const SymAddrSize &addr()   const { assert(has_addr()); return arg.addr; }
         int          num()    const { assert(has_num()); return arg.num; }
@@ -129,12 +135,19 @@ struct SymEv {
     assert(has_expected());
     return {arg.addr, _expected};
   }
+  AwaitCond cond() const {
+    assert(has_cond());
+    return {_await_op, _expected};
+  }
 
   void purge_data();
   void set_observed(bool observed);
 
 private:
   SymEv(enum kind kind, union arg arg) : kind(kind), arg(arg) {};
+  SymEv(enum kind kind, union arg arg, AwaitCond cond)
+    : kind(kind), arg(arg), _await_op(cond.op),
+    _expected(std::move(cond.operand)) {};
   SymEv(enum kind kind, SymData addr_written)
     : kind(kind), arg(std::move(addr_written.get_ref())),
       _written(std::move(addr_written.get_shared_block())) {};
@@ -151,5 +164,7 @@ inline std::ostream &operator<<(std::ostream &os, const SymEv &e){
 inline llvm::raw_ostream &operator<<(llvm::raw_ostream &os, const SymEv &e){
   return os << e.to_string();
 }
+
+extern std::string block_to_string(const SymData::block_type &blk, unsigned size);
 
 #endif

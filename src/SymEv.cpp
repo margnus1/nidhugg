@@ -34,6 +34,10 @@ void SymEv::set(SymEv other) {
     }
 #ifndef NDEBUG
     switch(kind) {
+    case LOAD_AWAIT:
+      assert(_await_op == other._await_op);
+      assert(memcmp(_expected.get(), other._expected.get(), arg.addr.size) == 0);
+      /* fallthrough */
     case LOAD:
     case M_INIT: case M_LOCK: case M_UNLOCK: case M_DELETE:
     case M_TRYLOCK: case M_TRYLOCK_FAIL:
@@ -58,7 +62,7 @@ void SymEv::set(SymEv other) {
   *this = other;
 }
 
-static std::string block_to_string(const SymData::block_type &blk, unsigned size) {
+std::string block_to_string(const SymData::block_type &blk, unsigned size) {
   if (!blk) return "-";
   int i = size-1;
   uint8_t *ptr = (uint8_t*)blk.get();
@@ -81,6 +85,10 @@ std::string SymEv::to_string(std::function<std::string(int)> pid_str) const {
     case NONDET:   return "Nondet(" + std::to_string(arg.num) + ")";
 
     case LOAD:     return "Load("    + arg.addr.to_string(pid_str) + ")";
+    case LOAD_AWAIT:
+      return "LoadAwait(" + arg.addr.to_string(pid_str) + ", "
+        + AwaitCond::name(_await_op) + " "
+        + block_to_string(_expected, arg.addr.size) + ")";
     case STORE:    return "Store("   + arg.addr.to_string(pid_str)
         + "," + block_to_string(_written, arg.addr.size) + ")";
     case FULLMEM:  return "Fullmem()";
@@ -122,7 +130,7 @@ std::string SymEv::to_string(std::function<std::string(int)> pid_str) const {
 
 bool SymEv::has_addr() const {
   switch(kind) {
-  case LOAD: case STORE:
+  case LOAD: case LOAD_AWAIT: case STORE:
   case M_INIT: case M_LOCK: case M_UNLOCK: case M_DELETE:
   case M_TRYLOCK: case M_TRYLOCK_FAIL:
   case C_INIT: case C_SIGNAL: case C_BRDCST: case C_DELETE:
@@ -146,7 +154,7 @@ bool SymEv::has_num() const {
   case NONE:
   case C_WAIT: case C_AWAKE:
   case FULLMEM:
-  case LOAD: case STORE:
+  case LOAD: case LOAD_AWAIT: case STORE:
   case M_INIT: case M_LOCK: case M_UNLOCK: case M_DELETE:
   case M_TRYLOCK: case M_TRYLOCK_FAIL:
   case C_INIT: case C_SIGNAL: case C_BRDCST: case C_DELETE:
@@ -167,7 +175,7 @@ bool SymEv::has_data() const {
   case NONDET:
   case C_WAIT: case C_AWAKE:
   case FULLMEM:
-  case LOAD:
+  case LOAD: case LOAD_AWAIT:
   case M_INIT: case M_LOCK: case M_UNLOCK: case M_DELETE:
   case M_TRYLOCK: case M_TRYLOCK_FAIL:
   case C_INIT: case C_SIGNAL: case C_BRDCST: case C_DELETE:
@@ -185,7 +193,7 @@ bool SymEv::has_expected() const {
   case NONDET:
   case C_WAIT: case C_AWAKE:
   case FULLMEM:
-  case LOAD:
+  case LOAD: case LOAD_AWAIT:
   case STORE: case UNOBS_STORE:
   case M_INIT: case M_LOCK: case M_UNLOCK: case M_DELETE:
   case M_TRYLOCK: case M_TRYLOCK_FAIL:

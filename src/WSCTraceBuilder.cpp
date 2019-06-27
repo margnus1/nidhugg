@@ -296,6 +296,7 @@ bool WSCTraceBuilder::reset(){
   cond_vars.clear();
   mem.clear();
   mutex_deadlocks.clear();
+  blocking_awaits.clear();
   last_full_memory_conflict = -1;
   prefix_idx = -1;
   replay = true;
@@ -446,6 +447,35 @@ void WSCTraceBuilder::do_load(const SymAddrSize &ml){
   assert(std::all_of(ml.begin(), ml.end(), [lu,this](SymAddr b) {
              return mem[b].last_update == lu;
            }));
+}
+
+void WSCTraceBuilder::load_await(const SymAddrSize &ml, AwaitCond cond) {
+  record_symbolic(SymEv::LoadAwait(ml, std::move(cond)));
+
+  /* We delete the blocking_awaits entry here, because doing so on
+   * writes is more complicated and duplicates logic in Interpreter. */
+  auto ml_await = blocking_awaits.find(ml);
+  if (ml_await != blocking_awaits.end()) {
+    IPid current = curev().iid.get_pid();
+    ml_await->second.erase(current);
+    if (conf.debug_print_on_reset)
+      llvm::dbgs() << "Clearing blocking await by " << threads[current].cpid
+                   << "\n";
+  }
+
+  do_load(ml);
+}
+
+void WSCTraceBuilder::load_await_fail(const SymAddrSize &ml, AwaitCond cond) {
+  IPid current = curev().iid.get_pid();
+  auto &ml_awaits = blocking_awaits[ml];
+
+  if (conf.debug_print_on_reset)
+    llvm::dbgs() << "Detecting blocking await by " << threads[current].cpid
+                 << "\n";
+
+  assert(ml_awaits.count(current) == 0);
+  ml_awaits.emplace(current, std::move(cond));
 }
 
 void WSCTraceBuilder::compare_exchange
@@ -809,8 +839,11 @@ int WSCTraceBuilder::compute_above_clock(unsigned i) {
     last = find_process_event(ipid, iidx-1);
     prefix[i].clock = prefix[last].clock;
   } else {
-    prefix[i].clock = {};
+    prefix[i].clock = VClock<IPid>();
     const Thread &t = threads[ipid];
+  /* The first event of a thread happens after the spawn event that
+   * created it.
+   */
     if (t.spawn_event >= 0)
       add_happens_after(i, t.spawn_event);
   }
@@ -828,9 +861,7 @@ int WSCTraceBuilder::compute_above_clock(unsigned i) {
 
 void WSCTraceBuilder::compute_vclocks(){
   Timing::Guard timing_guard(vclocks_context);
-  /* The first event of a thread happens after the spawn event that
-   * created it.
-   */
+
   std::vector<llvm::SmallVector<unsigned,2>> happens_after(prefix.size());
   for (unsigned i = 0; i < prefix.size(); i++){
     /* First add the non-reversible edges */
@@ -987,7 +1018,8 @@ static bool symev_is_lock_type(const SymEv &e) {
 
 bool WSCTraceBuilder::is_load(unsigned i) const {
   const SymEv &e = prefix[i].sym;
-  return e.kind == SymEv::LOAD || e.kind == SymEv::RMW
+  return e.kind == SymEv::LOAD || e.kind == SymEv::LOAD_AWAIT
+    || e.kind == SymEv::RMW
     || e.kind == SymEv::CMPXHG || e.kind == SymEv::CMPXHGFAIL
     || symev_is_lock_type(e);
 }
@@ -1060,6 +1092,13 @@ SymData WSCTraceBuilder::get_data(int i, const SymAddrSize &addr) const {
   assert(e.has_data());
   assert(e.addr() == addr);
   return e.data();
+}
+
+bool WSCTraceBuilder::rf_satisfies_cond(int r, int w) const {
+  assert(is_load(r));
+  const SymEv &re = prefix[r].sym;
+  if (!re.has_cond()) return true;
+  return re.cond().satisfied_by(get_data(w, re.addr()));
 }
 
 static std::ptrdiff_t delete_from_back(std::vector<int> &vec, int val) {
@@ -1218,6 +1257,67 @@ void WSCTraceBuilder::compute_prefixes() {
   //   pair.second.push_back(-1);
   // }
 
+  /* See if any blocking await can be satisfied */
+  for (const auto &addr_awaits : blocking_awaits) {
+    const SymAddrSize &addr = addr_awaits.first;
+    for (const auto &pid_cond : addr_awaits.second) {
+      IPid pid = pid_cond.first;
+      const AwaitCond &cond = pid_cond.second;
+      unsigned i = prefix_idx;
+      assert(i == prefix.size());
+      auto iidx = threads[pid].last_event_index()+1;
+      assert(prefix_idx == int(prefix.size()));
+      prefix.emplace_back(IID<IPid>(pid, iidx), 0, SymEv::LoadAwait(addr, cond));
+      threads[pid].event_indices.push_back(i); // Not needed?
+      compute_above_clock(i);
+      prefix[i].decision = decisions.size();
+      decisions.emplace_back();
+
+      auto try_read_from = [&](int j) -> bool {
+          assert(1);
+          if (!rf_satisfies_cond(i, j)) return false;
+          const std::shared_ptr<UnfoldingNode> &alt
+            = prefix[i].event = find_unfolding_node(pid, iidx, j);
+
+          if (conf.debug_print_on_reset)
+            llvm::dbgs() << "Trying to satisfy deadlocked " << pretty_index(i)
+                         << " reading from " << pretty_index(j);
+          prefix[i].read_from = j;
+
+          Leaf solution = try_sat({i}, writes_by_address);
+          if (solution.is_bottom()) return false;
+
+          /* We can satisfy this await. Commit to the decision node we
+           * allocated above and immediately start exploring this new
+           * trace. */
+          decisions.back().siblings.emplace(alt, solution);
+          return true;
+        };
+
+      const VClock<IPid> &above = prefix[i].above_clock;
+
+      if (try_read_from(-1)) return;
+      for (unsigned p = 0; p < threads.size(); ++p) {
+        const std::vector<unsigned> &writes
+          = writes_by_process_and_address[p][addr.addr];
+        auto start = std::upper_bound(writes.begin(), writes.end(), above[p],
+                                      [this](int index, unsigned w) {
+                                        return index < prefix[w].iid.get_index();
+                                      });
+        if (start != writes.begin()) --start;
+        for (auto it = start; it != writes.end(); ++it) {
+          if (try_read_from(*it)) return;
+        }
+      }
+
+      /* Cleanup dummy event */
+      decisions.pop_back();
+      threads[pid].event_indices.pop_back();
+      prefix.pop_back();
+    }
+  }
+
+  /* No. Proceed with */
   for (unsigned i = 0; i < prefix.size(); ++i) {
     auto try_swap = [&](int i, int j) {
         int original_read_from = *prefix[i].read_from;
@@ -1391,7 +1491,8 @@ void WSCTraceBuilder::compute_prefixes() {
             j == -1 ? nullptr : prefix[j].event;
           if (decision.siblings.count(read_from)) return;
           if (decision.sleep.count(read_from)) return;
-          if (!can_rf_by_vclocks(i, original_read_from, j)) {
+          if (!can_rf_by_vclocks(i, original_read_from, j)
+              || !rf_satisfies_cond(i, j)) {
             decision.siblings.emplace(read_from, Leaf());
             return;
           }
