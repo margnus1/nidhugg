@@ -75,6 +75,8 @@
 #include <random>
 #include <stdexcept>
 
+#include <boost/container/flat_map.hpp>
+
 namespace llvm {
 
 class IntrinsicLowering;
@@ -217,6 +219,10 @@ protected:
    * The key is the location of the object.
    */
   std::map<void*,PthreadMutex> PthreadMutexes;
+
+  /* The threads that are blocking in an await statement */
+  boost::container::flat_map
+  <SymAddrSize, boost::container::flat_map<int, AwaitCond>> blocking_awaits;
 
   /* The runtime stack of executing code. The top of the stack is the
    * current function record.
@@ -555,6 +561,11 @@ protected:  // Helper functions
    * stored to *ptr.
    */
   virtual bool isPthreadMutexLock(Instruction &I, GenericValue **ptr);
+  /* Returns true iff I is a call to __VERIFIER_load_await_*.
+   *
+   * The address is stored to *ptr, and the condition is stored to *cond.
+   */
+  virtual bool isLoadAwait(Instruction &I, GenericValue **ptr, AwaitCond *cond);
   /* Returns true iff CS is a call to inline assembly.
    *
    * If CS is a call to inline assembly, then *asmstr is assigned the
@@ -604,6 +615,10 @@ protected:  // Helper functions
   virtual void callFree(Function *F, const std::vector<GenericValue> &ArgVals);
   virtual void callAssertFail(Function *F, const std::vector<GenericValue> &ArgVals);
   virtual void callAtexit(Function *F, const std::vector<GenericValue> &ArgVals);
+  virtual void callLoadAwait(Function *F, const std::vector<GenericValue> &ArgVals);
+
+private:
+  void CheckAwaitWakeup(const GenericValue &Val, const void *ptr, const SymAddrSize &sas);
 };
 
 } // End llvm namespace

@@ -1410,6 +1410,7 @@ void Interpreter::visitStoreInst(StoreInst &I) {
 
   // FIXME: Cannot fail anymore
   CheckedStoreValueToMemory(Val, Ptr, I.getOperand(0)->getType());
+  CheckAwaitWakeup(Val, Ptr, *Ptr_sas);
 }
 
 void Interpreter::visitAtomicCmpXchgInst(AtomicCmpXchgInst &I){
@@ -1455,6 +1456,7 @@ void Interpreter::visitAtomicCmpXchgInst(AtomicCmpXchgInst &I){
       return;
     }
     CheckedStoreValueToMemory(NewVal,Ptr,Ty);
+    CheckAwaitWakeup(NewVal, Ptr, Ptr_sas);
   }else{
 #if defined(LLVM_CMPXCHG_SEPARATE_SUCCESS_FAILURE_ORDERING)
     Result.AggregateVal[1].IntVal = 0;
@@ -1520,6 +1522,7 @@ void Interpreter::visitAtomicRMWInst(AtomicRMWInst &I){
     return;
   }
   CheckedStoreValueToMemory(NewVal,Ptr,I.getType());
+  CheckAwaitWakeup(NewVal, Ptr, Ptr_sas);
 }
 
 void Interpreter::visitInlineAsm(CallSite &CS, const std::string &asmstr){
@@ -3155,6 +3158,52 @@ void Interpreter::callAssertFail(Function *F,
   abort();
 }
 
+void Interpreter::callLoadAwait(Function *F,
+                                const std::vector<GenericValue> &ArgVals){
+  GenericValue *Ptr = (GenericValue*)GVTOP(ArgVals[0]);
+  uint64_t op_int = ArgVals[1].IntVal.getZExtValue();
+  AwaitCond::Op op(static_cast<AwaitCond::Op>(op_int));
+   /* Should be arg2 type, but if well-formed is same as return type */
+  Type *Ty = F->getReturnType();
+  SymData::block_type operand = SymData::alloc_block
+#ifdef LLVM_EXECUTIONENGINE_DATALAYOUT_PTR
+    (getDataLayout()->getTypeStoreSize(Ty));
+#else
+    (getDataLayout().getTypeStoreSize(Ty));
+#endif
+  StoreValueToMemory(ArgVals[2],
+                     static_cast<GenericValue*>((void*)operand.get()),Ty);
+
+  GenericValue Result;
+
+  SymAddrSize Ptr_sas = GetSymAddrSize(Ptr,Ty);
+  TB.load_await(Ptr_sas, AwaitCond{op, std::move(operand)});
+
+  assert(!(DryRun && DryRunMem.size()));
+  if(!CheckedLoadValueFromMemory(Result, Ptr, Ty)) return;
+  returnValueToCaller(F->getReturnType(),Result);
+}
+
+void Interpreter::CheckAwaitWakeup(const GenericValue &Val, const void *ptr,
+                                   const SymAddrSize &sas) {
+  assert(!DryRun);
+
+  auto sas_awaits_iter = blocking_awaits.find(sas);
+  if (sas_awaits_iter == blocking_awaits.end()) return;
+  auto &sas_awaits = sas_awaits_iter->second;
+
+  /* Complexity could be improved, but it's unlikely to matter. */
+  for (auto it = sas_awaits.begin(); it != sas_awaits.end();) {
+    if (it->second.satisfied_by(ptr, sas.size)) {
+      TB.mark_available(it->first);
+      it = sas_awaits.erase(it);
+    } else {
+      ++it;
+    }
+  }
+  if (sas_awaits.empty()) blocking_awaits.erase(sas_awaits_iter);
+}
+
 //===----------------------------------------------------------------------===//
 // callFunction - Execute the specified function...
 //
@@ -3223,6 +3272,9 @@ void Interpreter::callFunction(Function *F,
     return;
   }else if(F->getName().str() == "__assert_fail"){
     callAssertFail(F,ArgVals);
+    return;
+  }else if(F->getName().str().rfind("__VERIFIER_load_await", 0) == 0){
+    callLoadAwait(F,ArgVals);
     return;
   }
 
@@ -3356,6 +3408,30 @@ bool Interpreter::isPthreadMutexLock(Instruction &I, GenericValue **ptr){
   return true;
 }
 
+bool Interpreter::isLoadAwait(Instruction &I, GenericValue **ptr, AwaitCond *cond){
+  if(!isa<CallInst>(I)) return false;
+  CallSite CS(static_cast<CallInst*>(&I));
+  Function *F = CS.getCalledFunction();
+  if(!F || F->getName().str().rfind("__VERIFIER_load_await", 0) != 0) return false;
+  auto args = CS.arg_begin();
+  *ptr = (GenericValue*)GVTOP(getOperandValue(args[0],ECStack()->back()));
+  uint64_t op_int = getOperandValue(args[1],ECStack()->back()).IntVal.getZExtValue();
+  AwaitCond::Op op(static_cast<AwaitCond::Op>(op_int));
+
+  Type *Ty = args[2]->getType();
+  SymData::block_type operand = SymData::alloc_block
+#ifdef LLVM_EXECUTIONENGINE_DATALAYOUT_PTR
+    (getDataLayout()->getTypeStoreSize(Ty));
+#else
+    (getDataLayout().getTypeStoreSize(Ty));
+#endif
+  StoreValueToMemory(getOperandValue(args[2],ECStack()->back()),
+                     static_cast<GenericValue*>((void*)operand.get()),Ty);
+
+  *cond = AwaitCond{op, std::move(operand)};
+  return true;
+}
+
 bool Interpreter::checkRefuse(Instruction &I){
   {
     int tid;
@@ -3385,6 +3461,30 @@ bool Interpreter::checkRefuse(Instruction &I){
       }else{
         // Either unlocked mutex, or uninitialized mutex.
         // In both cases let callPthreadMutex handle it.
+      }
+    }
+  }
+  {
+    GenericValue *ptr;
+    AwaitCond cond;
+    if(isLoadAwait(I, &ptr, &cond)) {
+      Option<SymAddrSize> ptr_sas = TryGetSymAddrSize(ptr,I.getOperand(2)->getType());
+      if (ptr_sas) {
+        assert(!(DryRun && DryRunMem.size()));
+        SymData::block_type actual = SymData::alloc_block(ptr_sas->size);
+        memcpy(actual.get(), (const void*)ptr, ptr_sas->size);
+        if (!cond.satisfied_by((const void*)ptr, ptr_sas->size)) {
+          assert(!cond.satisfied_by(actual.get(), ptr_sas->size));
+          TB.load_await_fail(*ptr_sas, cond);
+          TB.refuse_schedule();
+          /* TODO: Overlapping accesses */
+          blocking_awaits[*ptr_sas].emplace(CurrentThread, std::move(cond));
+          return true;
+        }
+      } else {
+        Debug::warn("await-bad-addr")
+          << "Await will segfault";
+        /* Bad address, let execute and crash */
       }
     }
   }

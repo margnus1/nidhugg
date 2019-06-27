@@ -23,7 +23,7 @@
 #define __TSO_PSO_TRACE_BUILDER_H__
 
 #include "Configuration.h"
-#include "SymAddr.h"
+#include "AwaitCond.h"
 #include "Trace.h"
 #include "DetCheckTraceBuilder.h"
 
@@ -141,6 +141,12 @@ public:
                                 bool success) = 0;
   /* Perform a load to ml. */
   virtual void load(const SymAddrSize &ml) = 0;
+  virtual void load_await(const SymAddrSize &ml, AwaitCond cond) {
+    std::abort();
+  }
+  virtual void load_await_fail(const SymAddrSize &ml, AwaitCond cond) {
+    std::abort();
+  }
   /* Perform an action that conflicts with all memory accesses and all
    * other full memory conflicts.
    *

@@ -3,6 +3,7 @@ AUTOMAKE_OPTIONS = -Wno-override ## Make autotools quit complaining about explic
 noinst_LIBRARIES = libswsc.a
 libswsc_a_SOURCES = \
   AddLibPass.cpp AddLibPass.h \
+  AwaitCond.cpp AwaitCond.h \
   BVClock.cpp BVClock.h \
   CheckModule.cpp CheckModule.h \
   Configuration.cpp Configuration.h \
