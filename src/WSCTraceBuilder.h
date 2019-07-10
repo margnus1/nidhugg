@@ -46,6 +46,7 @@ public:
   virtual bool is_replaying() const;
   virtual void metadata(const llvm::MDNode *md);
   virtual bool sleepset_is_empty() const;
+  bool await_blocked() const override { return blocking_awaits.size(); };
   virtual bool check_for_cycles();
   virtual Trace *get_trace() const;
   virtual bool reset();

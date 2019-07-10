@@ -63,7 +63,8 @@ public:
   class Result{
   public:
     /* Empty result */
-    Result() : trace_count(0), sleepset_blocked_trace_count(0), error_trace(0) {};
+    Result() : trace_count(0), sleepset_blocked_trace_count(0),
+               await_blocked_trace_count(0), error_trace(0) {};
     ~Result(){
       if(all_traces.empty()){ // Otherwise error_trace also appears in all_traces.
         delete error_trace;
@@ -76,6 +77,7 @@ public:
     int trace_count;
     /* The number of explored sleepset-blocked traces */
     int sleepset_blocked_trace_count;
+    int await_blocked_trace_count;
     /* An empty trace if no error has been encountered. Otherwise some
      * error trace.
      */

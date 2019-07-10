@@ -229,8 +229,10 @@ DPORDriver::Result DPORDriver::run(){
   do{
     if(conf.print_progress){
       llvm::dbgs() << esc << "[K" // Erase the line
-                   << "Computation #" << computation_count+1
-                   << esc << "[G"; // Go to beginning of line
+                   << "Computation #" << computation_count+1;
+      if (res.await_blocked_trace_count)
+        llvm::dbgs() << " (" << res.await_blocked_trace_count << " awb)";
+      llvm::dbgs() << esc << "[G"; // Go to beginning of line
       if(conf.print_progress_estimate){
         llvm::dbgs() << " ("
                      << int(100.0*float(computation_count+1)/float(estimate))
@@ -247,10 +249,12 @@ DPORDriver::Result DPORDriver::run(){
       res.all_traces.push_back(t);
       t_used = true;
     }
-    if(TB->sleepset_is_empty()){
-      ++res.trace_count;
-    }else{
+    if(!TB->sleepset_is_empty()){
       ++res.sleepset_blocked_trace_count;
+    }else if(TB->await_blocked()){
+      ++res.await_blocked_trace_count;
+    }else{
+      ++res.trace_count;
     }
     ++computation_count;
     if(t && t->has_errors() && !res.has_errors()){
