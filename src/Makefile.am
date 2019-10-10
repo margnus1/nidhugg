@@ -84,7 +84,7 @@ unittest_SOURCES = \
   unittest.cpp
 unittest_LDADD=libnidhugg.a @BOOST_SYSTEM_LIB@ @BOOST_UNIT_TEST_FRAMEWORK_LIB@
 unittest_LDFLAGS=-pthread @BOOST_LDFLAGS@
-unittest_CXXFLAGS=@BOOST_CPPFLAGS@
+unittest_CXXFLAGS= -fno-rtti @BOOST_CPPFLAGS@
 
 
 ## Run only the tests matching UTEST. Default: all.

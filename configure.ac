@@ -24,6 +24,7 @@ AX_CXX_COMPILE_STDCXX(14, [noext])
 AX_GIT_COMMIT
 
 # Checks for libraries
+AC_DEFINE([BOOST_NO_RTTI],[],[Use Boost w/o RTTI])
 AX_BOOST_BASE([1.64], [], [AC_MSG_FAILURE([Boost Required!])])
 AX_BOOST_UNIT_TEST_FRAMEWORK
 AX_BOOST_SYSTEM
