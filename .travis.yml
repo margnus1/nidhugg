@@ -23,7 +23,7 @@ _bionic-conf: &bionic
   dist: bionic
   addons:
     apt:
-      packages:
+      packages: &bionic-packages
         - *baseline-packages
         - libboost-test-dev
         - libboost-system-dev
@@ -58,10 +58,22 @@ matrix:
     #     - *xenial-clang-env
     #     - LLVM_VERSION=6.0.1
     - <<: *bionic
+      addons:
+        apt:
+          packages:
+            - *bionic-packages
+            - llvm-6.0-dev
+            - clang-6.0
+      compiler: clang
       env:
-        - *bionic-clang-env
-        - LLVM_VERSION=7.0.1
+        - CONFIGURE_FLAGS=--with-llvm=/usr/lib/llvm-6.0/
+        - CC=clang-6.0
+        - CXX=clang++-6.0
     - <<: *bionic
+      compiler: clang
+      env: LLVM_VERSION=7.0.1
+    - <<: *bionic
+      compiler: clang
       env: LLVM_VERSION=8.0.0
 
 before_script:
