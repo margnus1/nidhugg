@@ -1,54 +1,84 @@
-#!/bin/sh
+#!/bin/bash
 mkdir -p cache
 
 # LLVM
-case $LLVM_VERSION in
-    "3.9.1")
-	LLVM_URL="http://llvm.org/releases/$LLVM_VERSION/clang+llvm-$LLVM_VERSION-x86_64-linux-gnu-ubuntu-16.04.tar.xz"
-	;;
-    ?*)
-	LLVM_URL="http://llvm.org/releases/$LLVM_VERSION/clang+llvm-$LLVM_VERSION-x86_64-linux-gnu-ubuntu-14.04.tar.xz"
-	;;
-esac
-LLVM_DEP="cache/$LLVM_VERSION.tar.xz"
-LLVM_DIR="cache/clang+llvm-$LLVM_VERSION"
+if [ -n "$LLVM_VERSION" ]; then
+    LLVM_TRIPLE=x86_64-linux-gnu
+    LLVM_OS=ubuntu
+    LLVM_REL_EXT=tar.xz
 
-echo $LLVM_URL
-echo $LLVM_DEP
-echo $LLVM_DIR
+    case $LLVM_VERSION in
+        3.[89]*|[4-6].*)
+            LLVM_UBUNTU_VER=16.04
+            ;;
+        ?*)
+            LLVM_UBUNTU_VER=18.04
+            ;;
+    esac
+    LLVM_URL="http://releases.llvm.org/$LLVM_VERSION/clang+llvm-$LLVM_VERSION-$LLVM_TRIPLE-$LLVM_OS-$LLVM_UBUNTU_VER.$LLVM_REL_EXT"
+    LLVM_DEP="cache/$LLVM_VERSION.$LLVM_REL_EXT"
+    LLVM_DIR="cache/clang+llvm-$LLVM_VERSION"
 
-# download and install
-if [ ! -f $LLVM_DEP ] ; then
-    echo "Downloading LLVM"
-    wget $LLVM_URL -O $LLVM_DEP
-    if [ ! $? -eq 0 ]; then
-	echo "Error: Download failed"
-	rm $LLVM_DEP || true
-	exit 1
+    echo $LLVM_URL
+    echo $LLVM_DEP
+    echo $LLVM_DIR
+
+    # download and install
+    if [ ! -f $LLVM_DEP ] ; then
+        echo "Downloading LLVM"
+        wget $LLVM_URL -O $LLVM_DEP
+        if [ ! $? -eq 0 ]; then
+	    echo "Error: Download failed"
+	    rm $LLVM_DEP || true
+	    exit 1
+        fi
+    else
+        echo "Found Cached Archive"
     fi
-else
-    echo "Found Cached Archive"
+
+    if [ ! -d $LLVM_DIR ] ; then
+        echo "Extracting LLVM"
+        tar -xf $LLVM_DEP -C cache/
+        if [ ! $? -eq 0 ]; then
+	    echo "Error: Extraction Failed"
+	    rm $LLVM_DEP || true
+	    exit 1
+        fi
+        case $LLVM_VERSION in
+            3.5.*)
+	        mv cache/clang+llvm-$LLVM_VERSION-$LLVM_TRIPLE cache/clang+llvm-$LLVM_VERSION
+	        ;;
+            ?*)
+                mv cache/clang+llvm-$LLVM_VERSION-$LLVM_TRIPLE-$LLVM_OS-$LLVM_UBUNTU_VER cache/clang+llvm-$LLVM_VERSION
+	        ;;
+        esac
+    else
+        echo "Found Cached Installation"
+    fi
 fi
 
-if [ ! -d $LLVM_DIR ] ; then
-    echo "Extracting LLVM"
-    tar -xf $LLVM_DEP -C cache/
-    if [ ! $? -eq 0 ]; then
-	echo "Error: Extraction Failed"
-	rm $LLVM_DEP || true
-	exit 1
+# Boost
+if [ -n "$DOWNLOAD_BOOST" ]; then
+    if [ ! -f cache/boost/include/boost/version.hpp ]; then
+        # Boost is needed, and is not in cache
+        BOOST_VER_UNDERSCORED=`echo "$DOWNLOAD_BOOST" | tr . _`
+        BOOST_DIR=boost_$BOOST_VER_UNDERSCORED
+        BOOST_FILE=$BOOST_DIR.tar.gz
+        BOOST_URL=https://dl.bintray.com/boostorg/release/$DOWNLOAD_BOOST/source/$BOOST_FILE
+        mkdir -p cache/boost
+
+        echo "Downloading Boost"
+        wget $BOOST_URL
+        tar xf $BOOST_FILE
+        pushd $BOOST_DIR
+
+        echo "Building Boost"
+        ./bootstrap.sh --prefix=../cache/boost --with-libraries=test,system,timer
+        ./b2 -j6 -d0
+        ./b2 install -d0
+
+        popd # $BOOST_DIR
+    else
+        echo "Found Cached Boost"
     fi
-    case $LLVM_VERSION in
-	"3.5.0")
-	    mv cache/clang+llvm-$LLVM_VERSION-x86_64-linux-gnu cache/clang+llvm-$LLVM_VERSION
-	    ;;
-	"3.9.1")
-	    mv cache/clang+llvm-$LLVM_VERSION-x86_64-linux-gnu-ubuntu-16.04 cache/clang+llvm-$LLVM_VERSION
-	    ;;
-	?*)
-	    mv cache/clang+llvm-$LLVM_VERSION-x86_64-linux-gnu-ubuntu-14.04 cache/clang+llvm-$LLVM_VERSION
-	    ;;
-    esac
-else
-    echo "Found Cached Installation"
 fi

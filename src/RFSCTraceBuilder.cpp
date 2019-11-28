@@ -18,7 +18,7 @@
  */
 
 #include "Debug.h"
-#include "WSCTraceBuilder.h"
+#include "RFSCTraceBuilder.h"
 #include "PrefixHeuristic.h"
 #include "Timing.h"
 
@@ -43,7 +43,7 @@ static Timing::Context ponder_mutex_context("ponder_mutex");
 static Timing::Context graph_context("graph");
 static Timing::Context sat_context("sat");
 
-WSCTraceBuilder::WSCTraceBuilder(const Configuration &conf) : TSOPSOTraceBuilder(conf) {
+RFSCTraceBuilder::RFSCTraceBuilder(const Configuration &conf) : TSOPSOTraceBuilder(conf) {
   threads.push_back(Thread(CPid(), -1));
   prefix_idx = -1;
   replay = false;
@@ -53,10 +53,10 @@ WSCTraceBuilder::WSCTraceBuilder(const Configuration &conf) : TSOPSOTraceBuilder
   replay_point = 0;
 }
 
-WSCTraceBuilder::~WSCTraceBuilder(){
+RFSCTraceBuilder::~RFSCTraceBuilder(){
 }
 
-bool WSCTraceBuilder::schedule(int *proc, int *aux, int *alt, bool *dryrun){
+bool RFSCTraceBuilder::schedule(int *proc, int *aux, int *alt, bool *dryrun){
   if (cancelled) {
     assert(!std::any_of(threads.begin(), threads.end(), [](const Thread &t) {
                                                           return t.available;
@@ -149,7 +149,7 @@ bool WSCTraceBuilder::schedule(int *proc, int *aux, int *alt, bool *dryrun){
   return false; // No available threads
 }
 
-void WSCTraceBuilder::refuse_schedule(){
+void RFSCTraceBuilder::refuse_schedule(){
   assert(prefix_idx == int(prefix.size())-1);
   assert(curev().size == 1);
   assert(!curev().may_conflict);
@@ -161,19 +161,19 @@ void WSCTraceBuilder::refuse_schedule(){
   mark_unavailable(last_pid);
 }
 
-void WSCTraceBuilder::mark_available(int proc, int aux){
+void RFSCTraceBuilder::mark_available(int proc, int aux){
   threads[ipid(proc,aux)].available = true;
 }
 
-void WSCTraceBuilder::mark_unavailable(int proc, int aux){
+void RFSCTraceBuilder::mark_unavailable(int proc, int aux){
   threads[ipid(proc,aux)].available = false;
 }
 
-bool WSCTraceBuilder::is_replaying() const {
+bool RFSCTraceBuilder::is_replaying() const {
   return prefix_idx < replay_point;
 }
 
-void WSCTraceBuilder::cancel_replay(){
+void RFSCTraceBuilder::cancel_replay(){
   assert(replay == is_replaying());
   cancelled = true;
   replay = false;
@@ -188,18 +188,18 @@ void WSCTraceBuilder::cancel_replay(){
   decisions.resize(blame+1, decisions[0]);
 }
 
-void WSCTraceBuilder::metadata(const llvm::MDNode *md){
+void RFSCTraceBuilder::metadata(const llvm::MDNode *md){
   if(curev().md == 0){
     curev().md = md;
   }
   last_md = md;
 }
 
-bool WSCTraceBuilder::sleepset_is_empty() const{
+bool RFSCTraceBuilder::sleepset_is_empty() const{
   return true;
 }
 
-Trace *WSCTraceBuilder::get_trace() const{
+Trace *RFSCTraceBuilder::get_trace() const{
   std::vector<IID<CPid> > cmp;
   std::vector<const llvm::MDNode*> cmp_md;
   std::vector<Error*> errs;
@@ -215,7 +215,7 @@ Trace *WSCTraceBuilder::get_trace() const{
   return t;
 }
 
-bool WSCTraceBuilder::reset(){
+bool RFSCTraceBuilder::reset(){
   for(; !decisions.empty(); decisions.pop_back()) {
     auto &siblings = decisions.back().siblings;
     for (auto it = siblings.begin(); it != siblings.end();) {
@@ -307,7 +307,7 @@ bool WSCTraceBuilder::reset(){
   return true;
 }
 
-IID<CPid> WSCTraceBuilder::get_iid() const{
+IID<CPid> RFSCTraceBuilder::get_iid() const{
   IPid pid = curev().iid.get_pid();
   int idx = curev().iid.get_index();
   return IID<CPid>(threads[pid].cpid,idx);
@@ -322,11 +322,11 @@ static std::string lpad(const std::string &s, int n){
   return std::string(std::max(0, n - int(s.size())), ' ') + s;
 }
 
-std::string WSCTraceBuilder::iid_string(std::size_t pos) const{
+std::string RFSCTraceBuilder::iid_string(std::size_t pos) const{
   return iid_string(prefix[pos]);
 }
 
-std::string WSCTraceBuilder::iid_string(const Event &event) const{
+std::string RFSCTraceBuilder::iid_string(const Event &event) const{
   IPid pid = event.iid.get_pid();
   int index = event.iid.get_index();
   std::stringstream ss;
@@ -341,12 +341,12 @@ std::string WSCTraceBuilder::iid_string(const Event &event) const{
   return ss.str();
 }
 
-std::string WSCTraceBuilder::iid_string(IID<IPid> iid) const{
+std::string RFSCTraceBuilder::iid_string(IID<IPid> iid) const{
   return iid_string(find_process_event(iid.get_pid(), iid.get_index()));
 }
 
-void WSCTraceBuilder::debug_print() const {
-  llvm::dbgs() << "WSCTraceBuilder (debug print, replay until " << replay_point << "):\n";
+void RFSCTraceBuilder::debug_print() const {
+  llvm::dbgs() << "RFSCTraceBuilder (debug print, replay until " << replay_point << "):\n";
   int idx_offs = 0;
   int iid_offs = 0;
   int dec_offs = 0;
@@ -393,7 +393,7 @@ void WSCTraceBuilder::debug_print() const {
   }
 }
 
-void WSCTraceBuilder::spawn(){
+void RFSCTraceBuilder::spawn(){
   IPid parent_ipid = curev().iid.get_pid();
   CPid child_cpid = CPS.spawn(threads[parent_ipid].cpid);
   threads.push_back(Thread(child_cpid,prefix_idx));
@@ -401,20 +401,17 @@ void WSCTraceBuilder::spawn(){
   record_symbolic(SymEv::Spawn(threads.size() - 1));
 }
 
-void WSCTraceBuilder::store(const SymData &sd){
+void RFSCTraceBuilder::store(const SymData &sd){
   assert(false && "Cannot happen");
   abort();
 }
 
-void WSCTraceBuilder::atomic_store(const SymData &sd){
-  if (conf.observers)
-    record_symbolic(SymEv::UnobsStore(sd));
-  else
-    record_symbolic(SymEv::Store(sd));
+void RFSCTraceBuilder::atomic_store(const SymData &sd){
+  record_symbolic(SymEv::Store(sd));
   do_atomic_store(sd);
 }
 
-void WSCTraceBuilder::do_atomic_store(const SymData &sd){
+void RFSCTraceBuilder::do_atomic_store(const SymData &sd){
   const SymAddrSize &ml = sd.get_ref();
   curev().may_conflict = true;
 
@@ -427,18 +424,18 @@ void WSCTraceBuilder::do_atomic_store(const SymData &sd){
   }
 }
 
-void WSCTraceBuilder::atomic_rmw(const SymData &sd){
+void RFSCTraceBuilder::atomic_rmw(const SymData &sd){
   record_symbolic(SymEv::Rmw(sd));
   do_load(sd.get_ref());
   do_atomic_store(sd);
 }
 
-void WSCTraceBuilder::load(const SymAddrSize &ml){
+void RFSCTraceBuilder::load(const SymAddrSize &ml){
   record_symbolic(SymEv::Load(ml));
   do_load(ml);
 }
 
-void WSCTraceBuilder::do_load(const SymAddrSize &ml){
+void RFSCTraceBuilder::do_load(const SymAddrSize &ml){
   curev().may_conflict = true;
   int lu = mem[ml.addr].last_update;
   curev().read_from = lu;
@@ -449,7 +446,7 @@ void WSCTraceBuilder::do_load(const SymAddrSize &ml){
            }));
 }
 
-void WSCTraceBuilder::load_await(const SymAddrSize &ml, AwaitCond cond) {
+void RFSCTraceBuilder::load_await(const SymAddrSize &ml, AwaitCond cond) {
   record_symbolic(SymEv::LoadAwait(ml, std::move(cond)));
 
   /* We delete the blocking_awaits entry here, because doing so on
@@ -466,7 +463,7 @@ void WSCTraceBuilder::load_await(const SymAddrSize &ml, AwaitCond cond) {
   do_load(ml);
 }
 
-void WSCTraceBuilder::load_await_fail(const SymAddrSize &ml, AwaitCond cond) {
+void RFSCTraceBuilder::load_await_fail(const SymAddrSize &ml, AwaitCond cond) {
   IPid current = curev().iid.get_pid();
   auto &ml_awaits = blocking_awaits[ml];
 
@@ -478,7 +475,7 @@ void WSCTraceBuilder::load_await_fail(const SymAddrSize &ml, AwaitCond cond) {
   ml_awaits.emplace(current, std::move(cond));
 }
 
-void WSCTraceBuilder::compare_exchange
+void RFSCTraceBuilder::compare_exchange
 (const SymData &sd, const SymData::block_type expected, bool success){
   if(success){
     record_symbolic(SymEv::CmpXhg(sd, expected));
@@ -490,7 +487,7 @@ void WSCTraceBuilder::compare_exchange
   }
 }
 
-void WSCTraceBuilder::full_memory_conflict(){
+void RFSCTraceBuilder::full_memory_conflict(){
   llvm::dbgs() << "FULLMEM not supported\n";
   abort();
   record_symbolic(SymEv::Fullmem());
@@ -506,16 +503,16 @@ void WSCTraceBuilder::full_memory_conflict(){
   // mem.clear();
 }
 
-void WSCTraceBuilder::fence(){
+void RFSCTraceBuilder::fence(){
 }
 
-void WSCTraceBuilder::join(int tgt_proc){
+void RFSCTraceBuilder::join(int tgt_proc){
   record_symbolic(SymEv::Join(tgt_proc));
   curev().may_conflict = true;
   add_happens_after_thread(prefix_idx, tgt_proc);
 }
 
-void WSCTraceBuilder::mutex_lock(const SymAddrSize &ml){
+void RFSCTraceBuilder::mutex_lock(const SymAddrSize &ml){
   record_symbolic(SymEv::MLock(ml));
   fence();
 
@@ -527,7 +524,7 @@ void WSCTraceBuilder::mutex_lock(const SymAddrSize &ml){
   mutex.locked = true;
 }
 
-void WSCTraceBuilder::mutex_lock_fail(const SymAddrSize &ml){
+void RFSCTraceBuilder::mutex_lock_fail(const SymAddrSize &ml){
   assert(!conf.mutex_require_init || mutexes.count(ml.addr));
   IFDEBUG(Mutex &mutex = mutexes[ml.addr];)
   assert(0 <= mutex.last_lock && mutex.locked);
@@ -541,7 +538,7 @@ void WSCTraceBuilder::mutex_lock_fail(const SymAddrSize &ml){
   deadlocks.push_back(current);
 }
 
-void WSCTraceBuilder::mutex_trylock(const SymAddrSize &ml){
+void RFSCTraceBuilder::mutex_trylock(const SymAddrSize &ml){
   Mutex &mutex = mutexes[ml.addr];
   record_symbolic(mutex.locked ? SymEv::MTryLockFail(ml) : SymEv::MTryLock(ml));
   fence();
@@ -555,7 +552,7 @@ void WSCTraceBuilder::mutex_trylock(const SymAddrSize &ml){
   }
 }
 
-void WSCTraceBuilder::mutex_unlock(const SymAddrSize &ml){
+void RFSCTraceBuilder::mutex_unlock(const SymAddrSize &ml){
   record_symbolic(SymEv::MUnlock(ml));
   fence();
   Mutex &mutex = mutexes[ml.addr];
@@ -570,7 +567,7 @@ void WSCTraceBuilder::mutex_unlock(const SymAddrSize &ml){
   mutex_deadlocks.erase(ml.addr);
 }
 
-void WSCTraceBuilder::mutex_init(const SymAddrSize &ml){
+void RFSCTraceBuilder::mutex_init(const SymAddrSize &ml){
   record_symbolic(SymEv::MInit(ml));
   fence();
   assert(mutexes.count(ml.addr) == 0);
@@ -579,7 +576,7 @@ void WSCTraceBuilder::mutex_init(const SymAddrSize &ml){
   mutexes[ml.addr] = Mutex(prefix_idx);
 }
 
-void WSCTraceBuilder::mutex_destroy(const SymAddrSize &ml){
+void RFSCTraceBuilder::mutex_destroy(const SymAddrSize &ml){
   record_symbolic(SymEv::MDelete(ml));
   fence();
   Mutex &mutex = mutexes[ml.addr];
@@ -590,7 +587,7 @@ void WSCTraceBuilder::mutex_destroy(const SymAddrSize &ml){
   mutex.locked = false;
 }
 
-bool WSCTraceBuilder::cond_init(const SymAddrSize &ml){
+bool RFSCTraceBuilder::cond_init(const SymAddrSize &ml){
   llvm::dbgs() << "condvars not supported\n";
   abort();
   record_symbolic(SymEv::CInit(ml));
@@ -604,7 +601,7 @@ bool WSCTraceBuilder::cond_init(const SymAddrSize &ml){
   return true;
 }
 
-bool WSCTraceBuilder::cond_signal(const SymAddrSize &ml){
+bool RFSCTraceBuilder::cond_signal(const SymAddrSize &ml){
   llvm::dbgs() << "condvars not supported\n";
   abort();
   record_symbolic(SymEv::CSignal(ml));
@@ -643,7 +640,7 @@ bool WSCTraceBuilder::cond_signal(const SymAddrSize &ml){
   return true;
 }
 
-bool WSCTraceBuilder::cond_broadcast(const SymAddrSize &ml){
+bool RFSCTraceBuilder::cond_broadcast(const SymAddrSize &ml){
   llvm::dbgs() << "condvars not supported\n";
   abort();
   record_symbolic(SymEv::CBrdcst(ml));
@@ -669,7 +666,7 @@ bool WSCTraceBuilder::cond_broadcast(const SymAddrSize &ml){
   return true;
 }
 
-bool WSCTraceBuilder::cond_wait(const SymAddrSize &cond_ml, const SymAddrSize &mutex_ml){
+bool RFSCTraceBuilder::cond_wait(const SymAddrSize &cond_ml, const SymAddrSize &mutex_ml){
   llvm::dbgs() << "condvars not supported\n";
   abort();
   {
@@ -707,7 +704,7 @@ bool WSCTraceBuilder::cond_wait(const SymAddrSize &cond_ml, const SymAddrSize &m
   return true;
 }
 
-bool WSCTraceBuilder::cond_awake(const SymAddrSize &cond_ml, const SymAddrSize &mutex_ml){
+bool RFSCTraceBuilder::cond_awake(const SymAddrSize &cond_ml, const SymAddrSize &mutex_ml){
   llvm::dbgs() << "condvars not supported\n";
   abort();
   assert(cond_vars.count(cond_ml.addr));
@@ -721,7 +718,7 @@ bool WSCTraceBuilder::cond_awake(const SymAddrSize &cond_ml, const SymAddrSize &
   return true;
 }
 
-int WSCTraceBuilder::cond_destroy(const SymAddrSize &ml){
+int RFSCTraceBuilder::cond_destroy(const SymAddrSize &ml){
   llvm::dbgs() << "condvars not supported\n";
   abort();
   record_symbolic(SymEv::CDelete(ml));
@@ -743,7 +740,7 @@ int WSCTraceBuilder::cond_destroy(const SymAddrSize &ml){
   return rv;
 }
 
-void WSCTraceBuilder::register_alternatives(int alt_count){
+void RFSCTraceBuilder::register_alternatives(int alt_count){
   llvm::dbgs() << "alternatives not supported\n";
   abort();
   curev().may_conflict = true;
@@ -779,7 +776,7 @@ static void rev_recompute_data
   }
 }
 
-void WSCTraceBuilder::add_happens_after(unsigned second, unsigned first){
+void RFSCTraceBuilder::add_happens_after(unsigned second, unsigned first){
   assert(first != ~0u);
   assert(second != ~0u);
   assert(first != second);
@@ -792,7 +789,7 @@ void WSCTraceBuilder::add_happens_after(unsigned second, unsigned first){
   vec.push_back(first);
 }
 
-void WSCTraceBuilder::add_happens_after_thread(unsigned second, IPid thread){
+void RFSCTraceBuilder::add_happens_after_thread(unsigned second, IPid thread){
   assert((int)second == prefix_idx);
   if (threads[thread].event_indices.empty()) return;
   add_happens_after(second, threads[thread].event_indices.back());
@@ -831,7 +828,7 @@ static It frontier_filter(It first, It last, LessFn less){
   return fill;
 }
 
-int WSCTraceBuilder::compute_above_clock(unsigned i) {
+int RFSCTraceBuilder::compute_above_clock(unsigned i) {
   int last = -1;
   IPid ipid = prefix[i].iid.get_pid();
   int iidx = prefix[i].iid.get_index();
@@ -859,7 +856,7 @@ int WSCTraceBuilder::compute_above_clock(unsigned i) {
   return last;
 }
 
-void WSCTraceBuilder::compute_vclocks(){
+void RFSCTraceBuilder::compute_vclocks(){
   Timing::Guard timing_guard(vclocks_context);
 
   std::vector<llvm::SmallVector<unsigned,2>> happens_after(prefix.size());
@@ -898,7 +895,7 @@ void WSCTraceBuilder::compute_vclocks(){
   }
 }
 
-void WSCTraceBuilder::compute_unfolding() {
+void RFSCTraceBuilder::compute_unfolding() {
   Timing::Guard timing_guard(unfolding_context);
   for (unsigned i = 0; i < prefix.size(); ++i) {
     UnfoldingNodeChildren *parent_list;
@@ -935,7 +932,7 @@ void WSCTraceBuilder::compute_unfolding() {
   }
 }
 
-std::shared_ptr<WSCTraceBuilder::UnfoldingNode> WSCTraceBuilder::
+std::shared_ptr<RFSCTraceBuilder::UnfoldingNode> RFSCTraceBuilder::
 find_unfolding_node(IPid p, int index, Option<int> prefix_rf) {
   UnfoldingNodeChildren *parent_list;
   const std::shared_ptr<UnfoldingNode> null_ptr;
@@ -955,7 +952,7 @@ find_unfolding_node(IPid p, int index, Option<int> prefix_rf) {
   return find_unfolding_node(*parent_list, *parent, *read_from);
 }
 
-std::shared_ptr<WSCTraceBuilder::UnfoldingNode> WSCTraceBuilder::
+std::shared_ptr<RFSCTraceBuilder::UnfoldingNode> RFSCTraceBuilder::
 find_unfolding_node(UnfoldingNodeChildren &parent_list,
                     const std::shared_ptr<UnfoldingNode> &parent,
                     const std::shared_ptr<UnfoldingNode> &read_from) {
@@ -982,7 +979,7 @@ find_unfolding_node(UnfoldingNodeChildren &parent_list,
   return c;
 }
 
-std::shared_ptr<WSCTraceBuilder::UnfoldingNode> WSCTraceBuilder::alternative
+std::shared_ptr<RFSCTraceBuilder::UnfoldingNode> RFSCTraceBuilder::alternative
 (unsigned i, const std::shared_ptr<UnfoldingNode> &read_from) {
   std::shared_ptr<UnfoldingNode> &parent = prefix[i].event->parent;
   UnfoldingNodeChildren *parent_list;
@@ -996,7 +993,7 @@ std::shared_ptr<WSCTraceBuilder::UnfoldingNode> WSCTraceBuilder::alternative
   return find_unfolding_node(*parent_list, parent, read_from);
 }
 
-void WSCTraceBuilder::record_symbolic(SymEv event){
+void RFSCTraceBuilder::record_symbolic(SymEv event){
   if (!replay) {
     assert(!seen_effect);
     /* New event */
@@ -1016,7 +1013,7 @@ static bool symev_is_lock_type(const SymEv &e) {
     || e.kind == SymEv::M_UNLOCK  || e.kind == SymEv::M_DELETE;
 }
 
-bool WSCTraceBuilder::is_load(unsigned i) const {
+bool RFSCTraceBuilder::is_load(unsigned i) const {
   const SymEv &e = prefix[i].sym;
   return e.kind == SymEv::LOAD || e.kind == SymEv::LOAD_AWAIT
     || e.kind == SymEv::RMW
@@ -1024,46 +1021,46 @@ bool WSCTraceBuilder::is_load(unsigned i) const {
     || symev_is_lock_type(e);
 }
 
-bool WSCTraceBuilder::is_lock(unsigned i) const {
+bool RFSCTraceBuilder::is_lock(unsigned i) const {
   return prefix[i].sym.kind == SymEv::M_LOCK;
 }
 
-bool WSCTraceBuilder::does_lock(unsigned i) const {
+bool RFSCTraceBuilder::does_lock(unsigned i) const {
   auto kind = prefix[i].sym.kind;
   return kind == SymEv::M_LOCK || kind == SymEv::M_TRYLOCK;
 }
 
-bool WSCTraceBuilder::is_trylock_fail(unsigned i) const {
+bool RFSCTraceBuilder::is_trylock_fail(unsigned i) const {
   return prefix[i].sym.kind == SymEv::M_TRYLOCK_FAIL;
 }
 
-bool WSCTraceBuilder::is_unlock(unsigned i) const {
+bool RFSCTraceBuilder::is_unlock(unsigned i) const {
   return prefix[i].sym.kind == SymEv::M_UNLOCK;
 }
 
-bool WSCTraceBuilder::is_minit(unsigned i) const {
+bool RFSCTraceBuilder::is_minit(unsigned i) const {
   return prefix[i].sym.kind == SymEv::M_INIT;
 }
 
-bool WSCTraceBuilder::is_mdelete(unsigned i) const {
+bool RFSCTraceBuilder::is_mdelete(unsigned i) const {
   return prefix[i].sym.kind == SymEv::M_DELETE;
 }
 
-bool WSCTraceBuilder::is_lock_type(unsigned i) const {
+bool RFSCTraceBuilder::is_lock_type(unsigned i) const {
   return symev_is_lock_type(prefix[i].sym);
 }
 
-bool WSCTraceBuilder::is_store(unsigned i) const {
+bool RFSCTraceBuilder::is_store(unsigned i) const {
   const SymEv &e = prefix[i].sym;
   return e.kind == SymEv::STORE || e.kind == SymEv::CMPXHG
     || e.kind == SymEv::RMW || symev_is_lock_type(e);
 }
 
-bool WSCTraceBuilder::is_cmpxhgfail(unsigned i) const {
+bool RFSCTraceBuilder::is_cmpxhgfail(unsigned i) const {
   return prefix[i].sym.kind == SymEv::CMPXHGFAIL;
 }
 
-bool WSCTraceBuilder::is_store_when_reading_from(unsigned i, int read_from) const {
+bool RFSCTraceBuilder::is_store_when_reading_from(unsigned i, int read_from) const {
   const SymEv &e = prefix[i].sym;
   if (e.kind == SymEv::STORE || e.kind == SymEv::RMW || symev_is_lock_type(e))
     return true;
@@ -1074,7 +1071,7 @@ bool WSCTraceBuilder::is_store_when_reading_from(unsigned i, int read_from) cons
   return memcmp(expected.get_block(), actual.get_block(), e.addr().size) == 0;
 }
 
-SymAddrSize WSCTraceBuilder::get_addr(unsigned i) const {
+SymAddrSize RFSCTraceBuilder::get_addr(unsigned i) const {
   const SymEv &e = prefix[i].sym;
   if (e.has_addr()) {
     return e.addr();
@@ -1082,7 +1079,7 @@ SymAddrSize WSCTraceBuilder::get_addr(unsigned i) const {
   abort();
 }
 
-SymData WSCTraceBuilder::get_data(int i, const SymAddrSize &addr) const {
+SymData RFSCTraceBuilder::get_data(int i, const SymAddrSize &addr) const {
   if (i == -1) {
     SymData ret(addr, addr.size);
     memset(ret.get_block(), 0, addr.size);
@@ -1094,7 +1091,7 @@ SymData WSCTraceBuilder::get_data(int i, const SymAddrSize &addr) const {
   return e.data();
 }
 
-bool WSCTraceBuilder::rf_satisfies_cond(int r, int w) const {
+bool RFSCTraceBuilder::rf_satisfies_cond(int r, int w) const {
   assert(is_load(r));
   const SymEv &re = prefix[r].sym;
   if (!re.has_cond()) return true;
@@ -1114,7 +1111,7 @@ static std::ptrdiff_t delete_from_back(std::vector<int> &vec, int val) {
   }
 }
 
-WSCTraceBuilder::CmpXhgUndoLog WSCTraceBuilder::
+RFSCTraceBuilder::CmpXhgUndoLog RFSCTraceBuilder::
 recompute_cmpxhg_success(unsigned idx, std::vector<int> &writes) {
   auto kind = CmpXhgUndoLog::NONE;
   SymEv &e =  prefix[idx].sym;
@@ -1160,7 +1157,7 @@ recompute_cmpxhg_success(unsigned idx, std::vector<int> &writes) {
   return CmpXhgUndoLog{kind, idx, pos, &e};
 }
 
-void WSCTraceBuilder::
+void RFSCTraceBuilder::
 undo_cmpxhg_recomputation(CmpXhgUndoLog log, std::vector<int> &writes) {
   if (log.kind == CmpXhgUndoLog::NONE) return;
   SymEv &e = *log.e;
@@ -1189,12 +1186,12 @@ undo_cmpxhg_recomputation(CmpXhgUndoLog log, std::vector<int> &writes) {
   }
 }
 
-bool WSCTraceBuilder::happens_before(const Event &e,
+bool RFSCTraceBuilder::happens_before(const Event &e,
                                      const VClock<int> &c) const {
   return c.includes(e.iid);
 }
 
-bool WSCTraceBuilder::can_rf_by_vclocks
+bool RFSCTraceBuilder::can_rf_by_vclocks
 (int r, int ow, int w) const {
   /* Is the write after the read? */
   if (w != -1 && happens_before(prefix[r], prefix[w].clock)) abort();
@@ -1209,26 +1206,26 @@ bool WSCTraceBuilder::can_rf_by_vclocks
   return true;
 }
 
-bool WSCTraceBuilder::can_swap_by_vclocks(int r, int w) const {
+bool RFSCTraceBuilder::can_swap_by_vclocks(int r, int w) const {
   if (happens_before(prefix[r], prefix[w].above_clock)) return false;
   return true;
 }
 
-bool WSCTraceBuilder::can_swap_lock_by_vclocks(int f, int u, int s) const {
+bool RFSCTraceBuilder::can_swap_lock_by_vclocks(int f, int u, int s) const {
   if (happens_before(prefix[f], prefix[s].above_clock)) return false;
   return true;
 }
 
-void WSCTraceBuilder::compute_prefixes() {
+void RFSCTraceBuilder::compute_prefixes() {
   Timing::Guard analysis_timing_guard(analysis_context);
   compute_vclocks();
 
   compute_unfolding();
 
   if(conf.debug_print_on_reset){
-    llvm::dbgs() << " === WSCTraceBuilder state ===\n";
+    llvm::dbgs() << " === RFSCTraceBuilder state ===\n";
     debug_print();
-    llvm::dbgs() << " =============================\n";
+    llvm::dbgs() << " ==============================\n";
   }
 
   Timing::Guard neighbours_timing_guard(neighbours_context);
@@ -1552,7 +1549,7 @@ void WSCTraceBuilder::compute_prefixes() {
   }
 }
 
-void WSCTraceBuilder::output_formula
+void RFSCTraceBuilder::output_formula
 (SatSolver &sat,
  std::map<SymAddr,std::vector<int>> &writes_by_address,
  const std::vector<bool> &keep){
@@ -1610,7 +1607,7 @@ template<typename T, typename F> auto map(const std::vector<T> &vec, F f)
   return ret;
 }
 
-void WSCTraceBuilder::add_event_to_graph(SaturatedGraph &g, unsigned i) const {
+void RFSCTraceBuilder::add_event_to_graph(SaturatedGraph &g, unsigned i) const {
   SaturatedGraph::EventKind kind = SaturatedGraph::NONE;
   SymAddr addr;
   if (is_load(i)) {
@@ -1627,7 +1624,7 @@ void WSCTraceBuilder::add_event_to_graph(SaturatedGraph &g, unsigned i) const {
                              [this](unsigned j){return prefix[j].iid;}));
 }
 
-const SaturatedGraph &WSCTraceBuilder::get_cached_graph(unsigned i) {
+const SaturatedGraph &RFSCTraceBuilder::get_cached_graph(unsigned i) {
   SaturatedGraph &g = decisions[i].graph_cache;
   if (g.size() || i == 0) return g;
   for (unsigned j = i-1; j != 0; --j) {
@@ -1650,8 +1647,8 @@ const SaturatedGraph &WSCTraceBuilder::get_cached_graph(unsigned i) {
   return g;
 }
 
-WSCTraceBuilder::Leaf
-WSCTraceBuilder::try_sat
+RFSCTraceBuilder::Leaf
+RFSCTraceBuilder::try_sat
 (std::initializer_list<unsigned> changed_events,
  std::map<SymAddr,std::vector<int>> &writes_by_address){
   Timing::Guard timing_guard(graph_context);
@@ -1731,7 +1728,7 @@ WSCTraceBuilder::try_sat
                        std::move(g));
 }
 
-WSCTraceBuilder::Leaf WSCTraceBuilder::order_to_leaf
+RFSCTraceBuilder::Leaf RFSCTraceBuilder::order_to_leaf
 (int decision, std::initializer_list<unsigned> changed,
  const std::vector<unsigned> order, SaturatedGraph g) const{
   std::vector<Branch> new_prefix;
@@ -1755,7 +1752,7 @@ WSCTraceBuilder::Leaf WSCTraceBuilder::order_to_leaf
   return Leaf(new_prefix);
 }
 
-std::vector<bool> WSCTraceBuilder::causal_past(int decision) const {
+std::vector<bool> RFSCTraceBuilder::causal_past(int decision) const {
   std::vector<bool> acc(prefix.size());
   for (unsigned i = 0; i < prefix.size(); ++i) {
     assert(!((prefix[i].decision != -1) && prefix[i].pinned));
@@ -1767,7 +1764,7 @@ std::vector<bool> WSCTraceBuilder::causal_past(int decision) const {
   return acc;
 }
 
-void WSCTraceBuilder::causal_past_1(std::vector<bool> &acc, unsigned i) const{
+void RFSCTraceBuilder::causal_past_1(std::vector<bool> &acc, unsigned i) const{
   if (acc[i] == true) return;
   acc[i] = true;
   if (prefix[i].read_from && *prefix[i].read_from != -1) {
@@ -1781,7 +1778,7 @@ void WSCTraceBuilder::causal_past_1(std::vector<bool> &acc, unsigned i) const{
   }
 }
 
-std::vector<int> WSCTraceBuilder::iid_map_at(int event) const{
+std::vector<int> RFSCTraceBuilder::iid_map_at(int event) const{
   std::vector<int> map(threads.size(), 1);
   for (int i = 0; i < event; ++i) {
     iid_map_step(map, prefix[i]);
@@ -1789,16 +1786,16 @@ std::vector<int> WSCTraceBuilder::iid_map_at(int event) const{
   return map;
 }
 
-void WSCTraceBuilder::iid_map_step(std::vector<int> &iid_map, const Event &event) const{
+void RFSCTraceBuilder::iid_map_step(std::vector<int> &iid_map, const Event &event) const{
   if (iid_map.size() <= unsigned(event.iid.get_pid())) iid_map.resize(event.iid.get_pid()+1, 1);
   iid_map[event.iid.get_pid()] += event.size;
 }
 
-void WSCTraceBuilder::iid_map_step_rev(std::vector<int> &iid_map, const Event &event) const{
+void RFSCTraceBuilder::iid_map_step_rev(std::vector<int> &iid_map, const Event &event) const{
   iid_map[event.iid.get_pid()] -= event.size;
 }
 
-inline Option<unsigned> WSCTraceBuilder::
+inline Option<unsigned> RFSCTraceBuilder::
 try_find_process_event(IPid pid, int index) const{
   assert(pid >= 0 && pid < int(threads.size()));
   assert(index >= 1);
@@ -1816,7 +1813,7 @@ try_find_process_event(IPid pid, int index) const{
   return k;
 }
 
-inline unsigned WSCTraceBuilder::find_process_event(IPid pid, int index) const{
+inline unsigned RFSCTraceBuilder::find_process_event(IPid pid, int index) const{
   assert(pid >= 0 && pid < int(threads.size()));
   assert(index >= 1 && index <= int(threads[pid].event_indices.size()));
   unsigned k = threads[pid].event_indices[index-1];
@@ -1829,19 +1826,19 @@ inline unsigned WSCTraceBuilder::find_process_event(IPid pid, int index) const{
   return k;
 }
 
-int WSCTraceBuilder::estimate_trace_count() const{
+long double RFSCTraceBuilder::estimate_trace_count() const{
   return estimate_trace_count(0);
 }
 
-bool WSCTraceBuilder::check_for_cycles() {
+bool RFSCTraceBuilder::check_for_cycles() {
   return false;
 }
 
-int WSCTraceBuilder::estimate_trace_count(int idx) const{
+long double RFSCTraceBuilder::estimate_trace_count(int idx) const{
   if(idx > int(prefix.size())) return 0;
   if(idx == int(prefix.size())) return 1;
 
-  int count = 42;
+  long double count = 42;
   for(int i = int(prefix.size())-1; idx <= i; --i){
     count += prefix[i].sleep_branch_trace_count;
     // count += std::max(0, int(prefix.children_after(i)))

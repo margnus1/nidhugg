@@ -657,7 +657,6 @@ void PSOTraceBuilder::mutex_lock(const SymAddrSize &ml){
     return;
   }
   fence();
-  assert(mutexes.count(ml.addr));
   curnode().may_conflict = true;
   wakeup(Access::W,ml.addr);
 
@@ -748,10 +747,11 @@ void PSOTraceBuilder::mutex_init(const SymAddrSize &ml){
     return;
   }
   fence();
-  assert(mutexes.count(ml.addr) == 0);
   curnode().may_conflict = true;
-  mutexes[ml.addr] = Mutex(prefix_idx);
-  see_events({last_full_memory_conflict});
+  Mutex &mutex = mutexes[ml.addr];
+  see_events({mutex.last_access, last_full_memory_conflict});
+
+  mutex.last_access = prefix_idx;
 }
 
 void PSOTraceBuilder::mutex_destroy(const SymAddrSize &ml){
@@ -1270,15 +1270,15 @@ bool PSOTraceBuilder::has_cycle(IID<IPid> *loc) const{
   }
 }
 
-int PSOTraceBuilder::estimate_trace_count() const{
+long double PSOTraceBuilder::estimate_trace_count() const{
   return estimate_trace_count(0);
 }
 
-int PSOTraceBuilder::estimate_trace_count(int idx) const{
+long double PSOTraceBuilder::estimate_trace_count(int idx) const{
   if(idx > int(prefix.size())) return 0;
   if(idx == int(prefix.size())) return 1;
 
-  int count = 1;
+  long double count = 1;
   for(int i = int(prefix.size())-1; idx <= i; --i){
     count += prefix[i].sleep_branch_trace_count;
     count += prefix[i].branch.size()*(count / (1 + prefix[i].sleep.size()));

@@ -1,4 +1,4 @@
-AC_INIT([Swsc], [0.2], [carl.leonardsson@gmail.com])
+AC_INIT([Nidhugg], [0.2], [carl.leonardsson@gmail.com])
 m4_include([m4/ax_cxx_compile_stdcxx.m4])
 m4_include([m4/ax_boost_base.m4])
 m4_include([m4/ax_boost_system.m4])
@@ -8,6 +8,8 @@ m4_include([m4/ax_git_commit.m4])
 m4_include([m4/ax_clang.m4])
 AM_INIT_AUTOMAKE([-Wall -Werror foreign])
 # AC_CONFIG_SRCDIR([TSOTraceBuilder.cpp])
+
+AM_SILENT_RULES([yes])
 
 AC_PROG_CXX
 AC_PROG_CC
@@ -22,11 +24,12 @@ AX_CXX_COMPILE_STDCXX(14, [noext])
 AX_GIT_COMMIT
 
 # Checks for libraries
-AX_BOOST_BASE([1.64])
-AX_BOOST_SYSTEM
+AX_BOOST_BASE([1.64], [], [AC_MSG_FAILURE([Boost Required!])])
 AX_BOOST_UNIT_TEST_FRAMEWORK
+AX_BOOST_SYSTEM
 AX_LLVM(,[AC_MSG_FAILURE(LLVM is required.)])
-CXXFLAGS="`echo " $CXXFLAGS " | sed 's/ -fno-rtti / /' | sed 's/ -fno-exceptions / /'` --std=c++14"
+CXXFLAGS="`echo " $CXXFLAGS " | sed 's/ -fno-rtti / /' | sed 's/ -fno-exceptions / /'` --std=c++14 $BOOST_CPPFLAGS"
+LDFLAGS="$LDFLAGS $BOOST_LDFLAGS"
 AC_CHECK_LIB([dl], [dlopen],[],[AC_MSG_FAILURE([Could not find library libdl.])])
 PKG_CHECK_MODULES([FFI], [libffi], [
   AC_DEFINE([HAVE_LIBFFI], [1], [Define to 1 if we have libffi])
@@ -36,19 +39,19 @@ PKG_CHECK_MODULES([FFI], [libffi], [
 ],[
   AC_CHECK_LIB([ffi], [ffi_call],[],[AC_MSG_FAILURE([Could not find library libffi.])])
 ])
-BUILDSWSCC='yes'
-AC_ARG_ENABLE([swscc],[AS_HELP_STRING([--disable-swscc],[Don't build the script swscc.])],
+BUILDNIDHUGGC='yes'
+AC_ARG_ENABLE([nidhuggc],[AS_HELP_STRING([--disable-nidhuggc],[Don't build the script nidhuggc.])],
               [if test "x$enableval" = "xno"; then
-                 BUILDSWSCC='no'
+                 BUILDNIDHUGGC='no'
                elif test "x$enableval" != "xyes"; then
-                 AC_MSG_WARN([Unknown value given to --enable-swscc. Defaulting to enabling building of swscc.])
+                 AC_MSG_WARN([Unknown value given to --enable-nidhuggc. Defaulting to enabling building of nidhuggc.])
                fi],
               [])
-if test "x$BUILDSWSCC" = "xyes"; then
+if test "x$BUILDNIDHUGGC" = "xyes"; then
   AX_CLANG(,[
-    AC_MSG_WARN([The script swscc cannot be built without clang/clang++.])
+    AC_MSG_WARN([The script nidhuggc cannot be built without clang/clang++.])
     AC_MSG_WARN([Consider indicating the binaries clang/clang++ with switches --with-clang/--with-clangxx,])
-    AC_MSG_WARN([or disable swscc with the switch --disable-swscc.])
+    AC_MSG_WARN([or disable nidhuggc with the switch --disable-nidhuggc.])
     AC_MSG_FAILURE([Failed to detect clang/clang++.])
   ])
 fi
@@ -102,9 +105,6 @@ AC_DEFUN([AC_CHECK_HEADERS_ALT],
   fi
 ])
 
-if test "x$BOOST_UNIT_TEST_FRAMEWORK_LIB" != "x"; then
-  AC_CHECK_HEADER([boost/test/unit_test.hpp],[],[AC_MSG_FAILURE([Could not find header boost/test/unit_test.hpp.])],[AC_INCLUDES_DEFAULT])
-fi
 AC_CHECK_HEADERS([ \
   stdlib.h \
   sys/types.h \
@@ -1056,21 +1056,21 @@ AC_TYPE_UINT32_T
 AC_TYPE_UINT64_T
 AC_TYPE_UINT8_T
 
-if test "x$BUILDSWSCC" = "xyes"; then
+if test "x$BUILDNIDHUGGC" = "xyes"; then
   # Checks for python3
   AM_PATH_PYTHON([3.0],[],[
-    AC_MSG_WARN([Python 3 is required for the script swscc.])
+    AC_MSG_WARN([Python 3 is required for the script nidhuggc.])
     AC_MSG_WARN([Consider indicating the python interpreter with PYTHON=path,])
-    AC_MSG_WARN([or disable building of swscc with --disable-swscc.])
+    AC_MSG_WARN([or disable building of nidhuggc with --disable-nidhuggc.])
     AC_MSG_FAILURE([Python 3 is required.])
   ])
   AC_SUBST(PYTHON)
-  SWSCCBIN='swscc'
+  NIDHUGGCBIN='nidhuggc'
 else
-  SWSCCBIN=''
+  NIDHUGGCBIN=''
 fi
 
-AC_SUBST(SWSCCBIN)
+AC_SUBST(NIDHUGGCBIN)
 AM_CONDITIONAL([BUILDPDFDOCUMENTATION],[test "x$BUILDPDFDOCUMENTATION" = "xyes"])
 
 # Warn about compiling with clang++ for llvm version >= 3.9
@@ -1079,12 +1079,13 @@ if test "x$CXX" = "xclang" || test "x$CXX" = "xclang++" ; then
   if test "$(printf '%s\n' '3.9' "$LLVMVERSION" | sort -V | head -n 1)" = '3.9'; then
     AC_MSG_WARN([])
     AC_MSG_WARN([Trying to compile with $CXX against LLVM version >= 3.9.])
-    AC_MSG_WARN([This has been known to cause problems. (Segmentation faults on execution of swsc.)])
+    AC_MSG_WARN([This has been known to cause problems. (Segmentation faults on execution of nidhugg.)])
     AC_MSG_WARN([It is recommended to use g++ instead of $CXX.])
     AC_MSG_WARN([])
   fi
 fi
 
+AM_EXTRA_RECURSIVE_TARGETS([test run_unittest valtest litmus_test smoke_test])
 AC_CONFIG_HEADERS([config.h])
 AC_CONFIG_FILES([
   Makefile

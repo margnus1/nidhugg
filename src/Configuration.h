@@ -39,7 +39,6 @@ public:
   enum MemoryModel{
     MM_UNDEF, // No memory model was specified
     SC,
-    WEAK_SC,
     ARM,
     POWER,
     PSO,
@@ -47,7 +46,9 @@ public:
   };
   enum DPORAlgorithm{
     SOURCE,
-    OPTIMAL
+    OPTIMAL,
+    OBSERVERS,
+    READS_FROM,
   };
   /* Assign default values to all configuration parameters. */
   Configuration(){
@@ -84,7 +85,6 @@ public:
       "__assert_fail",
       "atexit"
     };
-    observers = false;
     check_robustness = false;
     ee_store_trace = false;
     debug_collect_all_traces = false;
@@ -133,8 +133,6 @@ public:
   bool c11;
   /* Which DPOR algorithm should be used? */
   DPORAlgorithm dpor_algorithm;
-  /* Should the observers optimisation be used? */
-  bool observers;
   /* A set of names of external functions that should be assumed to
    * not have fencing behavior. Notice however that the function
    * itself will still execute atomically, which may cause behaviors

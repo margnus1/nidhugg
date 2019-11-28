@@ -18,8 +18,8 @@
  */
 
 #include <config.h>
-#ifndef __WSC_TRACE_BUILDER_H__
-#define __WSC_TRACE_BUILDER_H__
+#ifndef __RFSC_TRACE_BUILDER_H__
+#define __RFSC_TRACE_BUILDER_H__
 
 #include "TSOPSOTraceBuilder.h"
 #include "VClock.h"
@@ -34,10 +34,10 @@
 
 static unsigned unf_ctr = 0;
 
-class WSCTraceBuilder final : public TSOPSOTraceBuilder{
+class RFSCTraceBuilder final : public TSOPSOTraceBuilder{
 public:
-  WSCTraceBuilder(const Configuration &conf = Configuration::default_conf);
-  virtual ~WSCTraceBuilder();
+  RFSCTraceBuilder(const Configuration &conf = Configuration::default_conf);
+  virtual ~RFSCTraceBuilder();
   virtual bool schedule(int *proc, int *aux, int *alt, bool *dryrun);
   virtual void refuse_schedule();
   virtual void mark_available(int proc, int aux = -1);
@@ -80,7 +80,7 @@ public:
   virtual bool cond_awake(const SymAddrSize &cond_ml, const SymAddrSize &mutex_ml);
   virtual int cond_destroy(const SymAddrSize &ml);
   virtual void register_alternatives(int alt_count);
-  virtual int estimate_trace_count() const;
+  virtual long double estimate_trace_count() const;
 protected:
   /* An identifier for a thread. An index into this->threads.
    *
@@ -482,7 +482,7 @@ protected:
   /* Estimate the total number of traces that have the same prefix as
    * the current one, up to the first idx events.
    */
-  int estimate_trace_count(int idx) const;
+  long double estimate_trace_count(int idx) const;
 
   bool is_load(unsigned idx) const;
   bool is_store(unsigned idx) const;

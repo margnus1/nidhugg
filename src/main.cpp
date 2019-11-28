@@ -32,20 +32,15 @@
 #include <set>
 #include <stdexcept>
 
-llvm::cl::opt<std::string>
-cl_transform("transform",llvm::cl::init(""),
-             llvm::cl::desc("Transform the input module and store it (as LLVM assembly) to OUTFILE."),
-             llvm::cl::NotHidden,llvm::cl::value_desc("OUTFILE"));
+extern llvm::cl::opt<std::string> cl_transform;
 
 llvm::cl::opt<std::string>
 cl_input_file(llvm::cl::desc("<input bitcode or assembly>"),
               llvm::cl::Positional,
               llvm::cl::init("-"));
 
-llvm::cl::list<std::string>
-cl_program_arguments(llvm::cl::desc("[-- <program arguments>...]"),
-                     llvm::cl::Positional,
-                     llvm::cl::ZeroOrMore);
+extern llvm::cl::list<std::string>
+cl_program_arguments;
 
 #ifndef NO_TIMING
 llvm::cl::opt<bool>
@@ -120,11 +115,16 @@ int main(int argc, char *argv[]){
         DPORDriver::parseIRFile(cl_input_file,conf);
 
       DPORDriver::Result res = driver->run();
-      std::cout << "Trace count: " << res.trace_count
-                << " (also " << res.sleepset_blocked_trace_count
-                << " sleepset blocked)"
-                << " (also " << res.await_blocked_trace_count
-                << " await blocked)" << std::endl;
+      std::cout << "Trace count: " << res.trace_count << std::endl;
+      if (res.await_blocked_trace_count > 0)
+        std::cout << "Await-blocked trace count: "
+                  << res.await_blocked_trace_count << std::endl;
+      if (res.assume_blocked_trace_count > 0)
+        std::cout << "Assume-blocked trace count: "
+                  << res.assume_blocked_trace_count << std::endl;
+      if (res.sleepset_blocked_trace_count > 0)
+        std::cout << "Sleepset-blocked trace count: "
+                  << res.sleepset_blocked_trace_count << std::endl;
       if(res.has_errors()){
         errors_detected = true;
         std::cout << "\n Error detected:\n"
