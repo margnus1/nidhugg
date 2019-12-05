@@ -455,6 +455,9 @@ void RFSCTraceBuilder::load_await(const SymAddrSize &ml, AwaitCond cond) {
   if (ml_await != blocking_awaits.end()) {
     IPid current = curev().iid.get_pid();
     ml_await->second.erase(current);
+    /* Delete the memory location if it became empty */
+    if (ml_await->second.empty())
+      blocking_awaits.erase(ml_await);
     if (conf.debug_print_on_reset)
       llvm::dbgs() << "Clearing blocking await by " << threads[current].cpid
                    << "\n";
