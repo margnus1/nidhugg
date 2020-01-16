@@ -13,7 +13,7 @@ before_script:
   - ./configure --with-llvm=$(brew --prefix llvm) --with-boost=$(brew --prefix boost) || (cat config.log; false)
   - make -Csrc -j6 all unittest
 script:
-  - make test && make valtest
+  - make smoke_test && make run_unittest && make valtest
 # cache:
 #   directories:
 #     - cache
