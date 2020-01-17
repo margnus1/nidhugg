@@ -13,7 +13,9 @@ before_script:
   - ./configure --with-llvm=$(brew --prefix llvm) --with-boost=$(brew --prefix boost) || (cat config.log; false)
   - make -Csrc -j6 all unittest
 script:
-  - make smoke_test && make run_unittest && make valtest
+  - src/nidhuggc -sc tests/smoke/C-tests/fib_bench_true_1.c
+  - make smoke_test
+  - make run_unittest && make valtest
 # cache:
 #   directories:
 #     - cache
