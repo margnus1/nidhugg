@@ -96,7 +96,7 @@ before_script:
   - ./configure $CONFIGURE_FLAGS || (cat config.log; false)
   - make -Csrc -j6 all unittest
 script:
-  - src/nidhuggc -sc tests/smoke/C-tests/fib_bench_true_1.c
+  - src/nidhuggc -sc tests/smoke/C-tests/mutex_hard.c || $(brew --prefix llvm)/bin/clang -emit-llvm -S -c tests/smoke/C-tests/mutex_hard.c -o -
   - make smoke_test
   - make run_unittest && make valtest
 cache:
