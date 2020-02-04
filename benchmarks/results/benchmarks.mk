@@ -13,7 +13,8 @@ NIDHUGG ?= nidhugg
 SOURCE    = $(NIDHUGG) -c11 -sc -source
 OPTIMAL   = $(NIDHUGG) -c11 -sc -optimal
 OBSERVERS = $(NIDHUGG) -c11 -sc -observers
-RFSC      = $(NIDHUGG) -c11 -sc -rf
+RFSC_THREADS = 1
+RFSC      = $(NIDHUGG) -c11 -sc -rf -n-threads=$(RFSC_THREADS)
 DCDPOR ?= dcdpor -dc
 RCMC ?= rcmc
 WRCMC ?= $(RCMC) --wrc11
