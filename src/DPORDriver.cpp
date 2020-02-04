@@ -29,7 +29,6 @@
 #include "SigSegvHandler.h"
 #include "StrModule.h"
 #include "ctpl.h"
-#include "blockingconcurrentqueue.h"
 #include "TSOInterpreter.h"
 #include "TSOTraceBuilder.h"
 #include "RFSCTraceBuilder.h"
@@ -50,6 +49,38 @@
 #include <llvm/Support/Host.h>
 #include <llvm/Support/MemoryBuffer.h>
 #include <llvm/Support/SourceMgr.h>
+
+namespace {
+  struct RunResult {
+    Trace *trace;
+    bool assume_blocked;
+    int tasks_created;
+  };
+
+  template<typename T = RunResult>
+  class BlockingQueue {
+    std::mutex mtx;
+    std::condition_variable cv;
+    std::queue<T> queue;
+
+  public:
+    T dequeue() {
+      std::unique_lock<std::mutex> lock(mtx);
+      while (queue.empty()) {
+        cv.wait(lock);
+      }
+      T res = std::forward<T>(queue.front());
+      queue.pop();
+      return res;
+    }
+
+    void enqueue(T res) {
+      std::lock_guard<std::mutex> lock(mtx);
+      queue.emplace(std::forward<T>(res));
+      cv.notify_one();
+    }
+  };
+}
 
 DPORDriver::DPORDriver(const Configuration &C) :
   conf(C), mod(0) {
@@ -301,8 +332,7 @@ DPORDriver::Result DPORDriver::run_rfsc_parallel() {
 
   int n_threadrunners = conf.n_threads-1;
 
-  moodycamel::BlockingConcurrentQueue<std::tuple<Trace *, bool, int>> queue;
-  std::tuple<Trace *, bool, int> tup;
+  BlockingQueue<std::tuple<Trace *, bool, int>> queue;
 
   RFSCDecisionTree decision_tree;
   RFSCUnfoldingTree unfolding_tree;
@@ -340,14 +370,13 @@ DPORDriver::Result DPORDriver::run_rfsc_parallel() {
       print_progress(computation_count, estimate, res);
     }
 
-    queue.wait_dequeue(tup);
-    tasks_left--;
 
     Trace *t;
     bool assume_blocked;
     int to_create;
-    std::tie(t, assume_blocked, to_create) = tup;
+    std::tie(t, assume_blocked, to_create) = queue.dequeue();
 
+    tasks_left--;
     tasks_left += to_create;
 
     // handle_trace requires a TB but with RFSC this is a constant value, so it does not matter which TB it is.
