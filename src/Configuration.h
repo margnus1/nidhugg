@@ -92,6 +92,7 @@ public:
     debug_print_on_reset = false;
     debug_print_on_error = false;
     transform_spin_assume = true;
+    transform_assume_await = true;
     transform_loop_unroll = -1;
     svcomp_nondet_int = nullptr;
     print_progress = false;
@@ -179,6 +180,8 @@ public:
   bool debug_print_on_error;
   /* In module transformation, enable the SpinAssume pass. */
   bool transform_spin_assume;
+  /* In module transformation, enable the AssumeAwait pass. */
+  bool transform_assume_await;
   /* If transform_loop_unroll is non-negative, in module
    * transformation, enable loop unrolling with depth
    * transform_loop_unroll.

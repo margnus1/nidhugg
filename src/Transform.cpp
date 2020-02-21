@@ -20,6 +20,7 @@
 #include "AddLibPass.h"
 #include "LoopUnrollPass.h"
 #include "SpinAssumePass.h"
+#include "AssumeAwaitPass.h"
 #include "StrModule.h"
 #include "Transform.h"
 
@@ -79,6 +80,9 @@ namespace Transform {
 #endif
     if(conf.transform_spin_assume){
       PM.add(new SpinAssumePass());
+    }
+    if(conf.transform_assume_await){
+      PM.add(new AssumeAwaitPass());
     }
     if(0 <= conf.transform_loop_unroll){
       PM.add(new LoopUnrollPass(conf.transform_loop_unroll));

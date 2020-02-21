@@ -120,6 +120,10 @@ static llvm::cl::OptionCategory cl_transformation_cat("Module Transformation Pas
 static llvm::cl::opt<bool> cl_transform_no_spin_assume("no-spin-assume",llvm::cl::NotHidden,llvm::cl::cat(cl_transformation_cat),
                                                        llvm::cl::desc("Disable the spin assume pass in module\n"
                                                                       "transformation."));
+static llvm::cl::opt<bool> cl_transform_no_assume_await
+("no-assume-await",llvm::cl::NotHidden,llvm::cl::cat(cl_transformation_cat),
+ llvm::cl::desc("Disable the assume to await pass in module\n"
+                "transformation."));
 
 static llvm::cl::opt<int>
 cl_transform_loop_unroll("unroll",
@@ -157,6 +161,7 @@ const std::set<std::string> &Configuration::commandline_opts(){
     "source","optimal","observers","rf",
     "check-robustness",
     "no-spin-assume",
+    "no-assume-await",
     "unroll",
     "print-progress",
     "print-progress-estimate"
@@ -179,6 +184,7 @@ void Configuration::assign_by_commandline(){
   dpor_algorithm = cl_dpor_algorithm;
   check_robustness = cl_check_robustness;
   transform_spin_assume = !cl_transform_no_spin_assume;
+  transform_assume_await = !cl_transform_no_assume_await;
   transform_loop_unroll = cl_transform_loop_unroll;
   if (cl_verifier_nondet_int.getNumOccurrences())
     svcomp_nondet_int = (int)cl_verifier_nondet_int;
@@ -240,6 +246,10 @@ void Configuration::check_commandline(){
     if(cl_transform_no_spin_assume.getNumOccurrences()){
       Debug::warn("Configuration::check_commandline:no:transform:transform-no-spin-assume")
         << "WARNING: --no-spin-assume ignored in absence of --transform.\n";
+    }
+    if(cl_transform_no_assume_await.getNumOccurrences()){
+      Debug::warn("Configuration::check_commandline:no:transform:transform-no-assume-await")
+        << "WARNING: --no-assume-await ignored in absence of --transform.\n";
     }
     if(cl_transform_loop_unroll.getNumOccurrences()){
       Debug::warn("Configuration::check_commandline:no:transform:transform_loop_unroll")
