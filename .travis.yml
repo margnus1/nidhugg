@@ -36,6 +36,10 @@ _bionic-clang-env-conf:
 matrix:
   include:
     - <<: *bionic
+      env:
+        - LLVM_VERSION=10.0.0-rc2
+        - CONFIGURE_FLAGS=--disable-llvm-clang-version-check
+    - <<: *bionic
       env: LLVM_VERSION=9.0.0
     - <<: *bionic
       env: LLVM_VERSION=8.0.0
@@ -74,6 +78,9 @@ matrix:
         - DOWNLOAD_BOOST=1.64.0
         - CONFIGURE_FLAGS="--with-llvm=/usr/lib/llvm-3.8/ --with-boost=`pwd`/cache/boost"
       compiler: clang # Not working with GCC
+    - services: docker
+      before_script: docker build -t nidhugg .
+      script: docker run --rm -ti -v `pwd`:`pwd` -w `pwd` nidhugg nidhuggc -sc tests/smoke/C-tests/mutex_hard.c
 
 before_script:
   - ./travis/install_deps.sh
