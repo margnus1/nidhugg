@@ -273,13 +273,19 @@ bool DPORDriver::handle_trace(TraceBuilder *TB, Trace *t, uint64_t *computation_
 }
 
 
+namespace{
+  std::unique_ptr<RFSCScheduler> make_scheduler(const Configuration &conf) {
+    return std::unique_ptr<RFSCScheduler>(new PriorityQueueScheduler());
+  }
+}
+
 DPORDriver::Result DPORDriver::run_rfsc_sequential() {
 
   Result res;
 
   std::tuple<Trace *, bool, int> tup;
 
-  RFSCDecisionTree decision_tree;
+  RFSCDecisionTree decision_tree(make_scheduler(conf));
   RFSCUnfoldingTree unfolding_tree;
 
   RFSCTraceBuilder *TB = new RFSCTraceBuilder(decision_tree, unfolding_tree, conf);
@@ -334,7 +340,7 @@ DPORDriver::Result DPORDriver::run_rfsc_parallel() {
 
   BlockingQueue<std::tuple<Trace *, bool, int>> queue;
 
-  RFSCDecisionTree decision_tree;
+  RFSCDecisionTree decision_tree(make_scheduler(conf));
   RFSCUnfoldingTree unfolding_tree;
 
   ctpl::thread_pool threadpool(n_threadrunners);
