@@ -28,7 +28,6 @@
 #include "PSOTraceBuilder.h"
 #include "SigSegvHandler.h"
 #include "StrModule.h"
-#include "ctpl.h"
 #include "TSOInterpreter.h"
 #include "TSOTraceBuilder.h"
 #include "RFSCTraceBuilder.h"
@@ -38,6 +37,7 @@
 #include <stdexcept>
 #include <iomanip>
 #include <cfloat>
+#include <thread>
 
 #if defined(HAVE_LLVM_IR_LLVMCONTEXT_H)
 #include <llvm/IR/LLVMContext.h>
@@ -280,16 +280,11 @@ namespace{
 }
 
 DPORDriver::Result DPORDriver::run_rfsc_sequential() {
-
   Result res;
-
-  std::tuple<Trace *, bool, int> tup;
 
   RFSCDecisionTree decision_tree(make_scheduler(conf));
   RFSCUnfoldingTree unfolding_tree;
-
-  RFSCTraceBuilder *TB = new RFSCTraceBuilder(decision_tree, unfolding_tree, conf);
-
+  RFSCTraceBuilder TB(decision_tree, unfolding_tree, conf);
 
   SigSegvHandler::setup_signal_handler();
 
@@ -303,20 +298,20 @@ DPORDriver::Result DPORDriver::run_rfsc_sequential() {
     }
 
     bool assume_blocked = false;
-    TB->reset();
-    Trace *t= this->run_once(*TB, assume_blocked);
+    TB.reset();
+    Trace *t= this->run_once(TB, assume_blocked);
     tasks_left--;
 
-    int to_create = TB->tasks_created;
+    int to_create = TB.tasks_created;
 
 
     tasks_left += to_create;
 
-    if (handle_trace(TB, t, &computation_count, res, assume_blocked)) {
+    if (handle_trace(&TB, t, &computation_count, res, assume_blocked)) {
       break;
     }
     if(conf.print_progress_estimate && (computation_count+1) % 100 == 0){
-      estimate = std::round(TB->estimate_trace_count());
+      estimate = std::round(TB.estimate_trace_count());
     }
 
   } while(tasks_left);
@@ -326,92 +321,60 @@ DPORDriver::Result DPORDriver::run_rfsc_sequential() {
   }
 
   SigSegvHandler::reset_signal_handler();
-
-  delete TB;
 
   return res;
 }
 
 DPORDriver::Result DPORDriver::run_rfsc_parallel() {
-
   Result res;
 
-  int n_threadrunners = conf.n_threads-1;
+  unsigned n_threads = conf.n_threads-1;
+  std::vector<std::thread> threads;
+  threads.reserve(n_threads);
 
-  BlockingQueue<std::tuple<Trace *, bool, int>> queue;
+  struct state {
+    state(const Configuration &conf) : decision_tree(make_scheduler(conf)) {}
+    RFSCDecisionTree decision_tree;
+    RFSCUnfoldingTree unfolding_tree;
+    uint64_t computation_count = 0;
+    std::mutex mutex;
+  } state(conf);
 
-  RFSCDecisionTree decision_tree(make_scheduler(conf));
-  RFSCUnfoldingTree unfolding_tree;
+  auto thread = [this, &res, &state] (unsigned id) {
+    RFSCScheduler &sched = state.decision_tree.get_scheduler();
+    RFSCTraceBuilder TB(state.decision_tree, state.unfolding_tree, conf);
+    while (TB.reset()) {
+      bool assume_blocked = false;
+      Trace *t = this->run_once(TB, assume_blocked);
+      TB.work_item.reset();
 
-  ctpl::thread_pool threadpool(n_threadrunners);
-
-  std::vector<RFSCTraceBuilder*> TBs;
-  for (int i = 0; i < n_threadrunners; i++) {
-    TBs.push_back(new RFSCTraceBuilder(decision_tree, unfolding_tree, conf));
-  }
-
-  auto thread_runner = [this, &TBs, &queue] (int id) {
-    bool assume_blocked = false;
-    if (TBs[id]->reset()) {
-      Trace *t= this->run_once(*TBs[id], assume_blocked);
-      // Release shared_ptr when finished
-      TBs[id]->work_item = nullptr;
-
-      queue.enqueue(std::make_tuple(std::move(t), assume_blocked, TBs[id]->tasks_created));
+      std::lock_guard<std::mutex> lock(state.mutex);
+      uint64_t remain =
+        sched.outstanding_jobs.fetch_sub(1, std::memory_order_relaxed)
+        - 1;
+      if (handle_trace(&TB, t, &state.computation_count, res, assume_blocked)
+          || remain == 0) {
+        sched.halt();
+      }
+      if(conf.print_progress){
+        const long double estimate = 1;
+        print_progress(state.computation_count, estimate, res);
+      }
     }
   };
 
   SigSegvHandler::setup_signal_handler();
-
-
-  uint64_t computation_count = 0;
-  long double estimate = 1;
-
-  // Initialize the first run.
-  threadpool.push(thread_runner);
-  int tasks_left = 1;
-
-  do{
-    if(conf.print_progress){
-      print_progress(computation_count, estimate, res);
-    }
-
-
-    Trace *t;
-    bool assume_blocked;
-    int to_create;
-    std::tie(t, assume_blocked, to_create) = queue.dequeue();
-
-    tasks_left--;
-    tasks_left += to_create;
-
-    // handle_trace requires a TB but with RFSC this is a constant value, so it does not matter which TB it is.
-    if (handle_trace(TBs[0], t, &computation_count, res, assume_blocked)) {
-      tasks_left = 0;
-      threadpool.stop(false);
-      break;
-    }
-    // TODO: Estimations are run on a TB prefix, for now we ignore this functionality.
-    // if(conf.print_progress_estimate && (computation_count+1) % 100 == 0){
-    //   estimate = std::round(TB->estimate_trace_count());
-    // }
-
-    for(int i = 0; i < to_create; i++) {
-      threadpool.push(thread_runner);
-    }
-
-  } while(tasks_left);
+  for (unsigned i = 0; i < n_threads; ++i) {
+    threads.emplace_back(thread, i+1);
+  }
+  thread(0);
+  for (unsigned i = 0; i < n_threads; ++i) {
+    threads[i].join();
+  }
+  SigSegvHandler::reset_signal_handler();
 
   if(conf.print_progress){
     llvm::dbgs() << ESC_char << "[K\n";
-  }
-
-  SigSegvHandler::reset_signal_handler();
-
-  // Spinlock to make sure all worker threads have finished their task before deleting TraceBuilders
-  while (threadpool.n_idle() != n_threadrunners);
-  for (int i = 0; i < n_threadrunners; i++) {
-    delete TBs[i];
   }
 
   return res;
