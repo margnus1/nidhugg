@@ -55,10 +55,10 @@ namespace Timing {
       pthread_key_t key;
       static void destructor(void *ptr) noexcept {};
     public:
-      tls_ptr() { pthread_key_create(&key, destructor); }
+      tls_ptr() { if (pthread_key_create(&key, destructor)) abort(); }
       ~tls_ptr() { pthread_key_delete(key); }
       T* get() const { return (T*)pthread_getspecific(key); }
-      void set(T* val) { pthread_setspecific(key, val); }
+      void set(T* val) { if (pthread_setspecific(key, val)) abort(); }
     };
   }
 
