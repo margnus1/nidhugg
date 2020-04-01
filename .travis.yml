@@ -1,11 +1,11 @@
-language: C++
-sudo: false
+os: linux
+language: cpp
 addons:
   apt:
     packages: &baseline-packages
       - valgrind
 
-# Template some configurations for different distros, to be used in the matrix
+# Template some configurations for different distros, to be used in the jobs
 # below
 _xenial-conf: &xenial
   dist: xenial
@@ -33,8 +33,14 @@ _bionic-clang-env-conf:
     - CC=clang
     - CXX=clang++
 
-matrix:
+jobs:
   include:
+    # - <<: *bionic
+    #   env:
+    #     - LLVM_VERSION=11.0.0-rc1
+    #     - CONFIGURE_FLAGS=--disable-llvm-clang-version-check
+    - <<: *bionic
+      env: LLVM_VERSION=10.0.0
     - <<: *bionic
       env: LLVM_VERSION=9.0.0
     - <<: *bionic
@@ -74,6 +80,9 @@ matrix:
         - DOWNLOAD_BOOST=1.64.0
         - CONFIGURE_FLAGS="--with-llvm=/usr/lib/llvm-3.8/ --with-boost=`pwd`/cache/boost"
       compiler: clang # Not working with GCC
+    - services: docker
+      before_script: docker build -t nidhugg .
+      script: docker run --rm -ti -v `pwd`:`pwd` -w `pwd` nidhugg nidhuggc -sc tests/smoke/C-tests/mutex_hard.c
 
 before_script:
   - ./travis/install_deps.sh

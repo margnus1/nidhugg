@@ -103,7 +103,7 @@ const SaturatedGraph &DecisionNode::get_saturated_graph(std::function<void(Satur
      */
     if (node->cache_initialised.load(std::memory_order_acquire)) {
       /* Reuse subgraph */
-      g = node->graph_cache;
+      g = node->graph_cache.clone();
       break;
     }
     node = node->parent;

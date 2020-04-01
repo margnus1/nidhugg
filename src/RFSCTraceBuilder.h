@@ -460,7 +460,7 @@ protected:
   void record_symbolic(SymEv event);
   Leaf try_sat(std::initializer_list<unsigned>, std::map<SymAddr,std::vector<int>> &);
   Leaf order_to_leaf(int decision, std::initializer_list<unsigned> changed,
-                     const std::vector<unsigned> order, SaturatedGraph g) const;
+                     const std::vector<unsigned> order) const;
   void output_formula(SatSolver &sat,
                       std::map<SymAddr,std::vector<int>> &,
                       const std::vector<bool> &);
