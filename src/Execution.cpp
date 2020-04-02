@@ -1396,6 +1396,7 @@ void Interpreter::visitLoadInst(LoadInst &I) {
   GenericValue *Ptr = (GenericValue*)GVTOP(SRC);
   GenericValue Result;
 
+  /* XXX: Can't this one fail? */
   SymAddrSize Ptr_sas = GetSymAddrSize(Ptr,I.getType());
   if (!conf.c11 || I.isVolatile() || I.getOrdering() != llvm::AtomicOrdering::NotAtomic)
     TB.load(Ptr_sas);
@@ -1406,7 +1407,7 @@ void Interpreter::visitLoadInst(LoadInst &I) {
     return;
   }
 
-  if(!CheckedLoadValueFromMemory(Result, Ptr, I.getType())) return;
+  LoadValueFromMemory(Result, Ptr, I.getType());
   SetValue(&I, Result, SF);
 }
 
@@ -1431,7 +1432,7 @@ void Interpreter::visitStoreInst(StoreInst &I) {
   }
 
   // FIXME: Cannot fail anymore
-  CheckedStoreValueToMemory(Val, Ptr, I.getOperand(0)->getType());
+  StoreValueToMemory(Val, Ptr, I.getOperand(0)->getType());
 }
 
 void Interpreter::visitAtomicCmpXchgInst(AtomicCmpXchgInst &I){
@@ -1443,6 +1444,7 @@ void Interpreter::visitAtomicCmpXchgInst(AtomicCmpXchgInst &I){
   Type *Ty = I.getCompareOperand()->getType();
   GenericValue Result;
 
+  /* XXX: Can't this one fail? */
   SymAddrSize Ptr_sas = GetSymAddrSize(Ptr,Ty);
   SymData::block_type expected = SymData::alloc_block(Ptr_sas.size);
   StoreValueToMemory(CmpVal,static_cast<GenericValue*>((void*)expected.get()),Ty);
@@ -1453,7 +1455,7 @@ void Interpreter::visitAtomicCmpXchgInst(AtomicCmpXchgInst &I){
   if(DryRun && DryRunMem.size()){
     DryRunLoadValueFromMemory(Result.AggregateVal[0], Ptr, Ptr_sas, Ty);
   }else{
-    if(!CheckedLoadValueFromMemory(Result.AggregateVal[0], Ptr, Ty)) return;
+    LoadValueFromMemory(Result.AggregateVal[0], Ptr, Ty);
   }
   GenericValue CmpRes = executeICMP_EQ(Result.AggregateVal[0],CmpVal,Ty);
 #else
@@ -1461,7 +1463,7 @@ void Interpreter::visitAtomicCmpXchgInst(AtomicCmpXchgInst &I){
   if(DryRun && DryRunMem.size()){
     DryRunLoadValueFromMemory(Result, Ptr, Ptr_sas, Ty);
   }else{
-    if(!CheckedLoadValueFromMemory(Result, Ptr, Ty)) return;
+    LoadValueFromMemory(Result, Ptr, Ty);
   }
   GenericValue CmpRes = executeICMP_EQ(Result,CmpVal,Ty);
 #endif
@@ -1476,7 +1478,7 @@ void Interpreter::visitAtomicCmpXchgInst(AtomicCmpXchgInst &I){
       DryRunMem.emplace_back(std::move(sd));
       return;
     }
-    CheckedStoreValueToMemory(NewVal,Ptr,Ty);
+    StoreValueToMemory(NewVal,Ptr,Ty);
   }else{
 #if defined(LLVM_CMPXCHG_SEPARATE_SUCCESS_FAILURE_ORDERING)
     Result.AggregateVal[1].IntVal = 0;
@@ -1494,13 +1496,14 @@ void Interpreter::visitAtomicRMWInst(AtomicRMWInst &I){
   assert(I.getType()->isIntegerTy());
   assert(I.getOrdering() != llvm::AtomicOrdering::NotAtomic);
 
+  /* Can't this one fail? */
   SymAddrSize Ptr_sas = GetSymAddrSize(Ptr,I.getType());
 
   /* Load old value at *Ptr */
   if(DryRun && DryRunMem.size()){
     DryRunLoadValueFromMemory(OldVal, Ptr, Ptr_sas, I.getType());
   }else{
-    if(!CheckedLoadValueFromMemory(OldVal, Ptr, I.getType())) return;
+    LoadValueFromMemory(OldVal, Ptr, I.getType());
   }
 
   SetValue(&I, OldVal, SF);
@@ -1541,7 +1544,7 @@ void Interpreter::visitAtomicRMWInst(AtomicRMWInst &I){
     DryRunMem.emplace_back(std::move(sd));
     return;
   }
-  CheckedStoreValueToMemory(NewVal,Ptr,I.getType());
+  StoreValueToMemory(NewVal,Ptr,I.getType());
 }
 
 void Interpreter::visitInlineAsm(CallSite &CS, const std::string &asmstr){
@@ -2661,6 +2664,7 @@ void Interpreter::callPthreadCreate(Function *F,
     if(Ptr){
       Type *ity = static_cast<PointerType*>(F->arg_begin()->getType())->getElementType();
       GenericValue TIDVal = tid_to_pthread_t(ity, new_tid);
+      /* XXX: No race detection on this access! */
       CheckedStoreValueToMemory(TIDVal,Ptr,ity);
     }else{
       /* Allow null pointers in first argument. For convenience. */
@@ -2712,6 +2716,7 @@ void Interpreter::callPthreadJoin(Function *F,
   GenericValue *rvPtr = (GenericValue*)GVTOP(ArgVals[1]);
   if(rvPtr){
     Type *ty = Type::getInt8PtrTy(F->getContext())->getPointerTo();
+    /* XXX: No race detection on this access*/
     if(!CheckedStoreValueToMemory(Threads[tid].RetVal,rvPtr,ty)) return;
   }
 
