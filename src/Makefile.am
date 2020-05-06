@@ -30,6 +30,7 @@ libnidhugg_a_SOURCES = \
   SaturatedGraph.h SaturatedGraph.cpp \
   SigSegvHandler.cpp SigSegvHandler.h \
   SatSolver.h \
+  Seqno.h \
   SExpr.h SExpr.cpp \
   SmtlibSatSolver.h SmtlibSatSolver.cpp \
   SpinAssumePass.cpp SpinAssumePass.h \
