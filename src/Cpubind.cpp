@@ -36,8 +36,10 @@ cl_pack("cpubind-pack", llvm::cl::NotHidden, llvm::cl::init(HWLOC_OBJ_CORE),
         llvm::cl::desc("Pack threads down to this level"),
         llvm::cl::values(clEnumValN(HWLOC_OBJ_PU,"pu","Processing unit")
                         ,clEnumValN(HWLOC_OBJ_CORE,"core","Physical cores (default)")
+#ifdef HWLOC_OBJ_L2CACHE
                         ,clEnumValN(HWLOC_OBJ_L2CACHE,"l2cache","L2 Cache")
                         ,clEnumValN(HWLOC_OBJ_L3CACHE,"l3cache","L3 Cache")
+#endif
                         ,clEnumValN(HWLOC_OBJ_NUMANODE,"numanode","NUMA Node")
                         ,clEnumValN(HWLOC_OBJ_PACKAGE,"package","Package")
                         ,clEnumValN(HWLOC_OBJ_MACHINE,"machine","Machine (maximum spread)")
