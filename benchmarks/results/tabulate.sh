@@ -113,7 +113,7 @@ case $verb in
                     fi
                 done
                 na='{\notavail}'
-                for tool in $natools; do printf "\t%s\t%s\t%s" "$na" "$na" "$na"; done
+                for tool in $natools; do printf "\t%s\t%s\t%s\t%s" "$na" "$na" "$na" "$na"; done
                 printf "\n"
             done
         done
