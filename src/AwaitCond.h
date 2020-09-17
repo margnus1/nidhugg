@@ -25,14 +25,25 @@
 #include "SymAddr.h"
 
 struct AwaitCond {
-  enum Op : int {
+  /* An Op is a bitfield, with the following meanings for bits 3..0, msb
+   * first:
+   *   Signed  - If the comparison is of signed values
+   *   Less    - If the comparison is true when lhs is less than rhs
+   *   Equal   - If the comparison is true when lhs is equal to rhs
+   *   Greater - If the comparison is true when lhs is greater than rhs
+   */
+  enum Op : unsigned {
     None,
-    GT = 0b001,
-    EQ = 0b010,
-    GE = 0b011,
-    LT = 0b100,
-    NE = 0b101,
-    LE = 0b110,
+    UGT = 0b0001,
+    EQ  = 0b0010,
+    UGE = 0b0011,
+    ULT = 0b0100,
+    NE  = 0b0101,
+    ULE = 0b0110,
+    SGT = 0b1001,
+    SGE = 0b1011,
+    SLT = 0b1100,
+    SLE = 0b1110,
   } op;
   SymData::block_type operand;
 

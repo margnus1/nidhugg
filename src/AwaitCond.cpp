@@ -19,9 +19,32 @@
 
 #include "AwaitCond.h"
 #include <cstring>
+#include <climits>
+#include <llvm/Support/Host.h>
+
+namespace {
+  int smemcmp(const void *lhs, const void *rhs, std::size_t count) {
+    if (!count) return 0;
+    std::size_t big_byte_index;
+    if (llvm::sys::IsBigEndianHost) {
+      big_byte_index = count-1;
+    } else {
+      big_byte_index = 0;
+    }
+    bool lsign = ((const char*)lhs)[big_byte_index] >> (CHAR_BIT-1);
+    bool rsign = ((const char*)rhs)[big_byte_index] >> (CHAR_BIT-1);
+    if (lsign != rsign) return lsign ? -1 : 1;
+    return std::memcmp(lhs, rhs, count);
+  }
+}
 
 bool AwaitCond::satisfied_by(const void *data, std::size_t size) const {
-  int cmp = std::memcmp(data, operand.get(), size);
+  int cmp;
+  if ((cmp >> 3) & 0b1) {
+    cmp = smemcmp(data, operand.get(), size);
+  } else {
+    cmp = std::memcmp(data, operand.get(), size);
+  }
   unsigned shift;
   if (cmp < 0) {
     shift = 2;
@@ -35,7 +58,7 @@ bool AwaitCond::satisfied_by(const void *data, std::size_t size) const {
 
 const char *AwaitCond::name(Op op) {
   const static char *names[] = {
-    nullptr, "GT", "EQ", "GE", "LT", "NE", "LE",
+    nullptr, "UGT", "EQ", "UGE", "ULT", "NE", "ULE",
   };
   return names[op];
 }
