@@ -40,6 +40,7 @@ BOOST_AUTO_TEST_CASE(Global_spin_1){
   Configuration conf = DPORDriver_test::get_sc_conf();
   Configuration tconf;
   tconf.transform_loop_unroll = 4;
+  tconf.transform_assume_await = false;
   DPORDriver *tdriver =
     DPORDriver::parseIR(Transform::transform(StrModule::portasm(R"(
 @x = global i32 0, align 4
@@ -152,6 +153,7 @@ BOOST_AUTO_TEST_CASE(PHI_counter_1){
   Configuration conf = DPORDriver_test::get_sc_conf();
   Configuration tconf;
   tconf.transform_loop_unroll = 4;
+  tconf.transform_assume_await = false;
   DPORDriver *tdriver =
     DPORDriver::parseIR(Transform::transform(StrModule::portasm(R"(
 @x = global i32 0, align 4

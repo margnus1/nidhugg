@@ -46,13 +46,11 @@
 #elif defined(HAVE_LLVM_MODULE_H)
 #include <llvm/Module.h>
 #endif
-#if defined(HAVE_LLVM_SUPPORT_CALLSITE_H)
-#include <llvm/Support/CallSite.h>
-#elif defined(HAVE_LLVM_IR_CALLSITE_H)
-#include <llvm/IR/CallSite.h>
-#endif
 #include <llvm/Transforms/Utils/BasicBlockUtils.h>
+#include <llvm/IR/InstIterator.h>
+#include <llvm/IR/Operator.h>
 #include <llvm/Config/llvm-config.h>
+#include <llvm/Support/Debug.h>
 
 // #include "CheckModule.h"
 #include "AssumeAwaitPass.h"
@@ -72,6 +70,7 @@ typedef llvm::Instruction TerminatorInst;
 #endif
 
 void AssumeAwaitPass::getAnalysisUsage(llvm::AnalysisUsage &AU) const{
+  AU.setPreservesCFG();
   AU.addRequired<llvm::LLVM_DOMINATOR_TREE_PASS>();
 }
 
@@ -89,6 +88,97 @@ namespace {
 #endif
       ;
   }
+
+  bool is_assume(llvm::CallInst *C) {
+    llvm::Function *F = C->getCalledFunction();
+    return F && F->getName().str() == "__VERIFIER_assume";
+  }
+
+  bool is_true(llvm::Value *v) {
+    auto *I = llvm::dyn_cast<llvm::Constant>(v);
+    return I && I->isAllOnesValue();
+  }
+
+  llvm::ICmpInst *get_condition(llvm::Value *v, bool *negate) {
+    if (auto *ret = llvm::dyn_cast<llvm::ICmpInst>(v)) return ret;
+    if (auto *op = llvm::dyn_cast<llvm::ZExtOperator>(v))
+      return get_condition(op->getOperand(0), negate);
+    if (auto *op = llvm::dyn_cast<llvm::Instruction>(v)) {
+      if (op->getOpcode() == llvm::Instruction::ZExt) {
+        return get_condition(op->getOperand(0), negate);
+      } else if(op->getOpcode() == llvm::Instruction::Xor) {
+        if (is_true(op->getOperand(0)) || is_true(op->getOperand(1))) {
+          *negate ^= true;
+          return get_condition(op->getOperand(is_true(op->getOperand(0)) ? 1 : 0), negate);
+        }
+      }
+    }
+    return nullptr;
+  }
+
+  AwaitCond::Op get_op(llvm::CmpInst::Predicate p) {
+    switch(p) {
+    case llvm::CmpInst::ICMP_EQ:  return AwaitCond::EQ;
+    case llvm::CmpInst::ICMP_NE:  return AwaitCond::NE;
+    case llvm::CmpInst::ICMP_UGT: return AwaitCond::UGT;
+    case llvm::CmpInst::ICMP_UGE: return AwaitCond::UGE;
+    case llvm::CmpInst::ICMP_ULT: return AwaitCond::ULT;
+    case llvm::CmpInst::ICMP_ULE: return AwaitCond::ULE;
+    case llvm::CmpInst::ICMP_SGT: return AwaitCond::SGT;
+    case llvm::CmpInst::ICMP_SGE: return AwaitCond::SGE;
+    case llvm::CmpInst::ICMP_SLT: return AwaitCond::SLT;
+    case llvm::CmpInst::ICMP_SLE: return AwaitCond::SLE;
+    default: return AwaitCond::None;
+    }
+  }
+
+  std::uint8_t get_mode(llvm::LoadInst *Load) {
+    switch (Load->getOrdering()) {
+      /* TODO: lift these modes to an enum somewhere */
+    case llvm::AtomicOrdering::NotAtomic:
+    case llvm::AtomicOrdering::Unordered:
+    case llvm::AtomicOrdering::Monotonic:
+      return 0; /* Races are bugs */
+    case llvm::AtomicOrdering::Acquire:
+      return 1; /* Release/Aquire */
+    case llvm::AtomicOrdering::SequentiallyConsistent:
+      return 2;
+    default:
+      llvm_unreachable("No other access modes allowed for Loads");
+    }
+  }
+
+  llvm::LoadInst *is_permissible_load(llvm::Value *V, llvm::BasicBlock *BB) {
+    llvm::Instruction *I = llvm::dyn_cast<llvm::Instruction>(V);
+    if (!I || I->getParent() != BB) return nullptr;
+    if (auto *Load = llvm::dyn_cast<llvm::LoadInst>(I)) {
+      return Load;
+    }
+    return nullptr;
+  }
+
+  bool is_permissible_arg(llvm::DominatorTree &DT, llvm::Value *V, llvm::LoadInst *Load) {
+    if (llvm::isa<llvm::Constant>(V)) return true;
+    if (llvm::isa<llvm::Argument>(V)) return true;
+    if (llvm::Instruction *VI = llvm::dyn_cast<llvm::Instruction>(V))
+      return DT.dominates(VI, Load);
+    /* TODO: What about operators applied to permissible_arg(s)? */
+    return false;
+  }
+
+  bool is_safe_intermediary(llvm::Instruction *I) {
+    return !I->mayHaveSideEffects();
+  }
+
+  bool is_safe_to_rewrite(llvm::LoadInst *Load, llvm::CallInst *Call) {
+    assert(Load->getParent() == Call->getParent()
+           && "We don't yet implement BB traversal");
+    llvm::BasicBlock::iterator li(Load), ci(Call);
+    while (--ci != li) {
+      if (!is_safe_intermediary(&*ci)) return false;
+    }
+    return true;
+  }
 }
 
 bool AssumeAwaitPass::doInitialization(llvm::Module &M){
@@ -101,11 +191,10 @@ bool AssumeAwaitPass::doInitialization(llvm::Module &M){
     if(!F_load_await[i]){
       llvm::FunctionType *loadAwaitTy;
       {
-        llvm::Type *voidTy = llvm::Type::getVoidTy(M.getContext());
         llvm::Type *i8Ty = llvm::Type::getInt8Ty(M.getContext());
         llvm::Type *ixTy = llvm::IntegerType::get(M.getContext(),sizes[i]);
         llvm::Type *ixPTy = llvm::PointerType::getUnqual(ixTy);
-        loadAwaitTy = llvm::FunctionType::get(voidTy,{ixPTy, i8Ty, ixTy},false);
+        loadAwaitTy = llvm::FunctionType::get(ixTy,{ixPTy, i8Ty, ixTy, i8Ty},false);
       }
       AttributeList assumeAttrs =
         AttributeList::get(M.getContext(),AttributeList::FunctionIndex,
@@ -118,8 +207,91 @@ bool AssumeAwaitPass::doInitialization(llvm::Module &M){
 }
 
 bool AssumeAwaitPass::runOnFunction(llvm::Function &F) {
+  bool changed = false;
+
+  for (llvm::BasicBlock &BB : F) {
+    for (auto it = BB.begin(), end = BB.end(); it != end;) {
+      if (tryRewriteAssume(&F, &BB, &*it)) {
+        changed = true;
+        if (it->use_empty()) it = it->eraseFromParent();
+        else ++it;
+      } else {
+        ++it;
+      }
+    }
+  }
+
+  return changed;
+}
+
+bool AssumeAwaitPass::tryRewriteAssume(llvm::Function *F, llvm::BasicBlock *BB, llvm::Instruction *I) const {
+  llvm::CallInst *Call = llvm::dyn_cast<llvm::CallInst>(I);
+  if (!Call || !is_assume(Call)) return false;
+  bool negate = false;
+  llvm::ICmpInst *Cond = get_condition(Call->getArgOperand(0), &negate);
+  if (!Cond) {
+    llvm::dbgs() << "Not rewriting assume in " << F->getName() << ": Could not find condition\n";
+    return false;
+  }
+  bool blame_load;
+  for (unsigned load_index = 0; load_index < 2; ++load_index) {
+    llvm::LoadInst *Load = is_permissible_load(Cond->getOperand(load_index),BB);
+    blame_load = !Load;
+    if (!Load) {
+      /* Message is printed later, if relevant */
+      continue;
+    }
+    llvm::Value *ArgVal = Cond->getOperand(1-load_index);
+    llvm::CmpInst::Predicate pred = Cond->getPredicate();
+    if (bool(load_index) ^ negate) pred = llvm::CmpInst::getSwappedPredicate(pred);
+    llvm::DominatorTree &DT = getAnalysis<llvm::LLVM_DOMINATOR_TREE_PASS>().getDomTree();
+    if (!is_permissible_arg(DT, ArgVal, Load)) {
+      llvm::dbgs() << "Not rewriting assume in " << F->getName() << ": RHS not permissible\n";
+      continue;
+    }
+    if (!is_safe_to_rewrite(Load, Call)) {
+      llvm::dbgs() << "Not rewriting assume in " << F->getName() << ": Rewrite would be unsafe\n";
+      continue;
+    }
+    AwaitCond::Op op = get_op(pred);
+    if (op == AwaitCond::None) {
+      llvm::dbgs() << "Not rewriting assume in " << F->getName()
+                   << ": Could not convert condition\n";
+      continue;
+    }
+    llvm::Value *AwaitFunction = getLoadAwait(Load->getType());
+    if (!AwaitFunction) {
+      llvm::dbgs() << "Not rewriting assume in " << F->getName()
+                   << ": Bad type " << Load->getType() << "\n";
+      continue;
+    }
+    llvm::dbgs() << "Wow, replacing " << *Load << " and " << *Call << " in " << F->getName() << "\n";
+    llvm::IntegerType *i8Ty = llvm::Type::getInt8Ty(F->getParent()->getContext());
+    llvm::ConstantInt *COp = llvm::ConstantInt::get(i8Ty, op);
+    llvm::ConstantInt *CMode = llvm::ConstantInt::get(i8Ty, get_mode(Load));
+    llvm::Value *Address = Load->getOperand(0);
+    llvm::BasicBlock::iterator LI(Load);
+    llvm::ReplaceInstWithInst(Load->getParent()->getInstList(), LI,
+                              llvm::CallInst::Create(AwaitFunction, {Address, COp, ArgVal, CMode}));
+    return true;
+  }
+  if (blame_load)
+    llvm::dbgs() << "Not rewriting assume in " << F->getName() << ": Could not find load\n";
   return false;
 }
 
+llvm::Value *AssumeAwaitPass::getLoadAwait(llvm::Type *t) const {
+  if (!t->isIntegerTy()) return nullptr;
+  unsigned index;
+  switch(t->getIntegerBitWidth()) {
+  case 8:  index = 0; break;
+  case 16: index = 1; break;
+  case 32: index = 2; break;
+  case 64: index = 3; break;
+  default: return nullptr;
+  }
+  return F_load_await[index];
+}
+
 char AssumeAwaitPass::ID = 0;
-static llvm::RegisterPass<AssumeAwaitPass> X("assume-await","Replace simple __VERIFIER_assumes with .");
+static llvm::RegisterPass<AssumeAwaitPass> X("assume-await","Replace simple __VERIFIER_assumes with __VERIFIER_await.");
