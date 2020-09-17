@@ -109,6 +109,8 @@ int main(int argc, char *argv[]){
     }
   }
   llvm::cl::ParseCommandLineOptions(argc, argv);
+  if (cl_input_file == "-") cl_input_file = "/dev/stdin";
+  if (cl_transform  == "-") cl_transform = "/dev/stdout";
 
   bool errors_detected = false;
   try{
