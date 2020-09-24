@@ -64,11 +64,7 @@
 #elif defined(HAVE_LLVM_SUPPORT_INSTVISITOR_H)
 #include <llvm/Support/InstVisitor.h>
 #endif
-#if defined(HAVE_LLVM_SUPPORT_CALLSITE_H)
-#include <llvm/Support/CallSite.h>
-#elif defined(HAVE_LLVM_IR_CALLSITE_H)
-#include <llvm/IR/CallSite.h>
-#endif
+#include "AnyCallInst.h"
 #include <llvm/Support/DataTypes.h>
 #include <llvm/Support/ErrorHandling.h>
 #include <llvm/Support/raw_ostream.h>
@@ -96,8 +92,8 @@ struct ExecutionContext {
   BasicBlock::iterator  CurInst;    // The next instruction to execute
   std::map<Value *, GenericValue> Values; // LLVM values used in this invocation
   std::vector<GenericValue>  VarArgs; // Values passed through an ellipsis
-  CallSite             Caller;     // Holds the call that called subframes.
-                                   // NULL if main func or debugger invoked fn
+  AnyCallInst           Caller;     // Holds the call that called subframes.
+                                    // NULL if main func or debugger invoked fn
 };
 
 // Interpreter - This class represents the entirety of the interpreter.
@@ -125,6 +121,9 @@ protected:
      * current function record.
      */
     std::vector<ExecutionContext> ECStack;
+    /* Whether the thread execution has been blocked due to failing an
+     * assume-statement
+     */
     bool AssumeBlocked;
     /* Contains the IDs (index into Threads) of all other threads
      * which are awaiting the termination of this thread to perform a
@@ -176,6 +175,8 @@ protected:
    * DryRun is assigned by the scheduling by TB.
    */
   bool DryRun;
+  /* True if execution has stopped due to blocking */
+  bool Blocked = false;
   /* Keeps temporary changes to memory which are performed during dry
    * runs. Instead of changing the actual memory, during dry runs all
    * memory stores collected in DryRunMem. This allows memory loads
@@ -359,9 +360,12 @@ public:
   virtual void visitBitCastInst(BitCastInst &I);
   virtual void visitSelectInst(SelectInst &I);
 
-  virtual void visitCallSite(CallSite CS);
-  virtual void visitCallInst(CallInst &I) { visitCallSite (CallSite (&I)); }
-  virtual void visitInvokeInst(InvokeInst &I) { visitCallSite (CallSite (&I)); }
+  virtual void visitAnyCallInst(AnyCallInst CI);
+#ifdef LLVM_HAS_CALLBASE
+  virtual void visitCallBase(CallBase &CB) { visitAnyCallInst(&CB); }
+#else
+  virtual void visitCallSite(CallSite CS) { visitAnyCallInst(CS); }
+#endif
   virtual void visitUnreachableInst(UnreachableInst &I);
 
   virtual void visitShl(BinaryOperator &I);
@@ -379,7 +383,7 @@ public:
   virtual void visitFenceInst(FenceInst &I) { /* Do nothing */ };
   virtual void visitAtomicCmpXchgInst(AtomicCmpXchgInst &I);
   virtual void visitAtomicRMWInst(AtomicRMWInst &I);
-  virtual void visitInlineAsm(CallSite &CS, const std::string &asmstr);
+  virtual void visitInlineAsm(llvm::CallInst &CI, const std::string &asmstr);
 
   virtual void visitInstruction(Instruction &I) {
     errs() << I << "\n";
@@ -476,14 +480,29 @@ protected:  // Helper functions
   virtual void clearAllStacks();
 
   /* Get a SymAddr for the pointer Ptr, returning false if the address
-   * is unknown. */
-  Option<SymAddr> TryGetSymAddr(void *Ptr);
-  /* Get a SymAddr for the pointer Ptr that is assumed to be known */
-  SymAddr GetSymAddr(void *Ptr);
-  /* Get a SymAddrSize for the pointer Ptr, with the size given by Ty for
-   * the current data layout.
+   * is unknown.
+   * GetSymAddr() additionally reports the error and calls abort()
+   * before returning nullptr.
    */
-  SymAddrSize GetSymAddrSize(void *Ptr, Type *Ty);
+  Option<SymAddr> TryGetSymAddr(void *Ptr);
+  Option<SymAddr> GetSymAddr(void *Ptr);
+  /* Get a SymAddrSize for the pointer Ptr, with the size given by Ty
+   * for the current data layout.
+   * GetSymAddrSize() reports the error and calls abort() before returning
+   * nullptr.
+   */
+  Option<SymAddrSize> GetSymAddrSize(void *Ptr, Type *Ty) {
+    if (Option<SymAddr> addr = GetSymAddr(Ptr)) {
+#ifdef LLVM_EXECUTIONENGINE_DATALAYOUT_PTR
+      return {{*addr,getDataLayout()->getTypeStoreSize(Ty)}};
+#else
+      return {{*addr,getDataLayout().getTypeStoreSize(Ty)}};
+#endif
+    } else {
+      return nullptr;
+    }
+  }
+
   Option<SymAddrSize> TryGetSymAddrSize(void *Ptr, Type *Ty){
     if (Option<SymAddr> addr = TryGetSymAddr(Ptr)) {
 #ifdef LLVM_EXECUTIONENGINE_DATALAYOUT_PTR
@@ -494,13 +513,15 @@ protected:  // Helper functions
     } else {
       return nullptr;
     }
-  };
+  }
   /* Get a SymData associated with the location Ptr, and holding the
    * value Val of type Ty. The size of the memory location will be
    * that of Ty.
    */
-  SymData GetSymData(void *Ptr, Type *Ty, const GenericValue &Val){
-    return GetSymData(GetSymAddrSize(Ptr,Ty), Ty, Val);
+  Option<SymData> GetSymData(void *Ptr, Type *Ty, const GenericValue &Val){
+    Option<SymAddrSize> Ptr_sas = GetSymAddrSize(Ptr,Ty);
+    if (!Ptr_sas) return nullptr;
+    return GetSymData(*Ptr_sas, Ty, Val);
   }
   /* Get a SymData associated with the location Ptr, and holding the
    * value Val of type Ty. The size of the memory location will be
@@ -526,28 +547,8 @@ protected:  // Helper functions
                                          GenericValue *Src,
                                          SymAddrSize Src_sas, Type *Ty);
 
-  /* Same as ExecutionEngine::StoreValueToMemory, but check for
-   * segmentation faults, and generate errors as appropriate.
-   *
-   * Returns true on success, false on failure (segmentation fault).
-   */
-  virtual bool CheckedStoreValueToMemory(const GenericValue &Val,
-                                         GenericValue *Ptr, Type *Ty);
-  /* Same as ExecutionEngine::LoadValueFromMemory, but check for
-   * segmentation faults, and generate errors as appropriate.
-   *
-   * Returns true on success, false on failure (segmentation fault).
-   */
-  virtual bool CheckedLoadValueFromMemory(GenericValue &Val,
-                                          GenericValue *Src, Type *Ty);
-  virtual bool CheckedLoadIntFromMemory(APInt &IntVal, uint8_t *Src, unsigned LoadBytes);
-  virtual bool CheckedStoreIntToMemory(const APInt &IntVal, uint8_t *Dst, unsigned StoreBytes);
-  template<typename T> bool CheckedAssign(T &tgt, const T *src);
-  template<typename T> bool CheckedStore(T *tgt, const T &src);
-  virtual bool CheckedMemCpy(uint8_t *dst, const uint8_t *src, unsigned n);
-  virtual bool CheckedMemSet(uint8_t *s, int c, size_t n);
   /* Returns true if I is a call to an unknown intrinsic function, as
-   * defined by Interpreter::visitCallSite. Such function calls are
+   * defined by Interpreter::visitAnyCallInst. Such function calls are
    * replaced by some other sequence of instructions upon execution.
    */
   virtual bool isUnknownIntrinsic(Instruction &I);
@@ -573,7 +574,7 @@ protected:  // Helper functions
    * If CS is a call to inline assembly, then *asmstr is assigned the
    * assembly string.
    */
-  virtual bool isInlineAsm(CallSite &CS, std::string *asmstr);
+  virtual bool isInlineAsm(AnyCallInst CI, std::string *asmstr);
   /* I should be the next instruction that has been
    * scheduled. CurrentProc and ECStack shoauld be properly setup to
    * execute I.

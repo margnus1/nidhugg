@@ -11,12 +11,15 @@ if [ -n "$LLVM_VERSION" ]; then
         3.[89]*|[4-6].*)
             LLVM_UBUNTU_VER=16.04
             ;;
-        ?*)
+        [7-9].*|10.*)
             LLVM_UBUNTU_VER=18.04
+            ;;
+        ?*)
+            LLVM_UBUNTU_VER=20.04
             ;;
     esac
     case $LLVM_VERSION in
-        *-rc*)
+        *-rc*|1?.*)
             LLVM_URL_PREFIX="https://github.com/llvm/llvm-project/releases/download/llvmorg-$LLVM_VERSION"
             ;;
         *)

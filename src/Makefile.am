@@ -9,6 +9,7 @@ libnidhugg_a_SOURCES = \
   CheckModule.cpp CheckModule.h \
   Configuration.cpp Configuration.h \
   CPid.cpp CPid.h \
+  Cpubind.cpp Cpubind.h \
   Debug.cpp Debug.h \
   DetCheckTraceBuilder.cpp DetCheckTraceBuilder.h \
   DPORDriver.cpp DPORDriver.h \
@@ -30,8 +31,8 @@ libnidhugg_a_SOURCES = \
   PSOInterpreter.cpp PSOInterpreter.h \
   PSOTraceBuilder.cpp PSOTraceBuilder.h \
   SaturatedGraph.h SaturatedGraph.cpp \
-  SigSegvHandler.cpp SigSegvHandler.h \
   SatSolver.h \
+  Seqno.h \
   SExpr.h SExpr.cpp \
   SmtlibSatSolver.h SmtlibSatSolver.cpp \
   SpinAssumePass.cpp SpinAssumePass.h \
@@ -40,11 +41,14 @@ libnidhugg_a_SOURCES = \
   SymAddr.cpp SymAddr.h \
   Timing.cpp Timing.h \
   Trace.cpp Trace.h \
+  TraceUtil.cpp TraceUtil.h \
   TraceBuilder.cpp TraceBuilder.h \
   Transform.cpp Transform.h \
   TSOInterpreter.cpp TSOInterpreter.h \
   TSOPSOTraceBuilder.h \
   TSOTraceBuilder.cpp TSOTraceBuilder.h \
+  RFSCUnfoldingTree.cpp RFSCUnfoldingTree.h \
+  RFSCDecisionTree.cpp RFSCDecisionTree.h \
   RFSCTraceBuilder.cpp RFSCTraceBuilder.h \
   VClock.cpp VClock.h VClock.tcc \
   vecset.h vecset.tcc
@@ -67,6 +71,9 @@ unittest_SOURCES = \
   DPORDriver_test.cpp DPORDriver_test.h \
   DryRun_test.cpp \
   FBVClock_test.cpp \
+  GenMap_test.cpp \
+  GenVector_test.cpp \
+  Interpreter_test.cpp \
   nregex_test.cpp \
   Observers_test.cpp \
   POWER_test.cpp \
@@ -74,6 +81,7 @@ unittest_SOURCES = \
   PSO_test.cpp \
   PSO_test2.cpp \
   Regression_test.cpp \
+  RFSC_test.cpp \
   RMW_test.cpp \
   Robustness_test.cpp \
   SC_test.cpp \

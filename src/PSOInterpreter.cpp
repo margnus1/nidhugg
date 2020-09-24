@@ -114,12 +114,13 @@ void PSOInterpreter::runAux(int proc, int aux){
     }
   }
 
-  TB.atomic_store(sd);
-  if (DryRun) return;
-
-  if(!CheckedMemCpy(pso_threads[proc].aux_to_addr[aux],blk,ml.size)){
+  if(!TB.atomic_store(sd)){
+    abort();
     return;
   }
+  if (DryRun) return;
+
+  std::memcpy(pso_threads[proc].aux_to_addr[aux],blk,ml.size);
 
   /* Should we reenable the thread after awaiting buffer flush? */
   switch(pso_threads[proc].awaiting_buffer_flush){
@@ -160,7 +161,7 @@ int PSOInterpreter::newThread(const CPid &cpid){
 
 bool PSOInterpreter::isFence(llvm::Instruction &I){
   if(llvm::isa<llvm::CallInst>(I)){
-    llvm::CallSite CS(static_cast<llvm::CallInst*>(&I));
+    AnyCallInst CS(static_cast<llvm::CallInst*>(&I));
     llvm::Function *F = CS.getCalledFunction();
     if(F && F->isDeclaration() &&
        F->getIntrinsicID() == llvm::Intrinsic::not_intrinsic &&
@@ -240,13 +241,14 @@ bool PSOInterpreter::checkRefuse(llvm::Instruction &I){
     llvm::ExecutionContext &SF = ECStack()->back();
     llvm::GenericValue SRC = getOperandValue(static_cast<llvm::LoadInst&>(I).getPointerOperand(), SF);
     llvm::GenericValue *Ptr = (llvm::GenericValue*)GVTOP(SRC);
-    SymAddrSize mr = GetSymAddrSize(Ptr,static_cast<llvm::LoadInst&>(I).getType());
-    if(!pso_threads[CurrentThread].readable(mr)){
+    Option<SymAddrSize> mr = TryGetSymAddrSize(Ptr,static_cast<llvm::LoadInst&>(I).getType());
+    if (!mr) return false; /* Let it execute and segfault */
+    if(!pso_threads[CurrentThread].readable(*mr)){
       /* Block until this store buffer entry has disappeared from
        * the buffer.
        */
       pso_threads[CurrentThread].awaiting_buffer_flush = PSOThread::BFL_PARTIAL;
-      pso_threads[CurrentThread].buffer_flush_ml = mr;
+      pso_threads[CurrentThread].buffer_flush_ml = *mr;
       TB.refuse_schedule();
       return true;
     }
@@ -260,31 +262,35 @@ void PSOInterpreter::visitLoadInst(llvm::LoadInst &I){
   llvm::GenericValue *Ptr = (llvm::GenericValue*)GVTOP(SRC);
   llvm::GenericValue Result;
 
-  SymAddrSize ml = GetSymAddrSize(Ptr,I.getType());
-  TB.load(ml);
+  Option<SymAddrSize> ml = GetSymAddrSize(Ptr,I.getType());
+  if (!ml) return;
+  if(!TB.load(*ml)){
+    abort();
+    return;
+  }
 
   if(DryRun && DryRunMem.size()){
     assert(pso_threads[CurrentThread].all_buffers_empty());
-    DryRunLoadValueFromMemory(Result, Ptr, ml, I.getType());
+    DryRunLoadValueFromMemory(Result, Ptr, *ml, I.getType());
     SetValue(&I, Result, SF);
     return;
   }
 
   /* Check store buffer for ROWE opportunity. */
-  if(pso_threads[CurrentThread].store_buffers.count(ml.addr)){
-    uint8_t *blk = new uint8_t[ml.size];
-    for(SymAddr b : ml){
-      assert(pso_threads[CurrentThread].store_buffers[b].back().ml == ml);
-      blk[b - ml.addr] = pso_threads[CurrentThread].store_buffers[b].back().val;
+  if(pso_threads[CurrentThread].store_buffers.count(ml->addr)){
+    uint8_t *blk = new uint8_t[ml->size];
+    for(SymAddr b : *ml){
+      assert(pso_threads[CurrentThread].store_buffers[b].back().ml == *ml);
+      blk[b - ml->addr] = pso_threads[CurrentThread].store_buffers[b].back().val;
     }
-    CheckedLoadValueFromMemory(Result,(llvm::GenericValue*)blk,I.getType());
+    LoadValueFromMemory(Result,(llvm::GenericValue*)blk,I.getType());
     SetValue(&I, Result, SF);
     delete[] blk;
     return;
   }
 
   /* Load from memory */
-  if(!CheckedLoadValueFromMemory(Result, Ptr, I.getType())) return;
+  LoadValueFromMemory(Result, Ptr, I.getType());
   SetValue(&I, Result, SF);
 }
 
@@ -294,7 +300,8 @@ void PSOInterpreter::visitStoreInst(llvm::StoreInst &I){
   llvm::GenericValue *Ptr = (llvm::GenericValue *)GVTOP
     (getOperandValue(I.getPointerOperand(), SF));
 
-  SymData mb = GetSymData(Ptr, I.getOperand(0)->getType(), Val);
+  Option<SymData> mb = GetSymData(Ptr, I.getOperand(0)->getType(), Val);
+  if (!mb) return;
 
   PSOThread &thr = pso_threads[CurrentThread];
 
@@ -302,36 +309,45 @@ void PSOInterpreter::visitStoreInst(llvm::StoreInst &I){
      0 <= AtomicFunctionCall){
     /* Atomic store */
     assert(thr.all_buffers_empty());
-    TB.atomic_store(mb);
-    if(DryRun){
-      DryRunMem.push_back(mb);
+    if(!TB.atomic_store(*mb)){
+      abort();
       return;
     }
-    CheckedStoreValueToMemory(Val, Ptr, I.getOperand(0)->getType());
+    if(DryRun){
+      DryRunMem.push_back(*mb);
+      return;
+    }
+    StoreValueToMemory(Val, Ptr, I.getOperand(0)->getType());
   }else{
     /* Store to buffer */
-    const SymAddrSize &ml = mb.get_ref();
+    const SymAddrSize &ml = mb->get_ref();
     if(thr.byte_to_aux.count(ml.addr) == 0){
       thr.byte_to_aux[ml.addr] = int(thr.aux_to_byte.size());
       thr.aux_to_byte.push_back(ml.addr);
       thr.aux_to_addr.push_back((uint8_t*)Ptr);
     }
 
-    TB.store(mb);
+    if(!TB.store(*mb)){
+      abort();
+      return;
+    }
     if(DryRun){
-      DryRunMem.push_back(mb);
+      DryRunMem.push_back(*mb);
       return;
     }
     for(SymAddr b : ml){
       unsigned i = b - ml.addr;
-      thr.store_buffers[b].push_back(PendingStoreByte(ml,((uint8_t*)mb.get_block())[i]));
+      thr.store_buffers[b].push_back(PendingStoreByte(ml,((uint8_t*)mb->get_block())[i]));
     }
   }
 }
 
 void PSOInterpreter::visitFenceInst(llvm::FenceInst &I){
   if(I.getOrdering() == LLVM_ATOMIC_ORDERING_SCOPE::SequentiallyConsistent){
-    TB.fence();
+    if(!TB.fence()){
+      abort();
+      return;
+    }
   }
 }
 
@@ -345,9 +361,12 @@ void PSOInterpreter::visitAtomicRMWInst(llvm::AtomicRMWInst &I){
   Interpreter::visitAtomicRMWInst(I);
 }
 
-void PSOInterpreter::visitInlineAsm(llvm::CallSite &CS, const std::string &asmstr){
+void PSOInterpreter::visitInlineAsm(llvm::CallInst &CI, const std::string &asmstr){
   if(asmstr == "mfence"){
-    TB.fence();
+    if(!TB.fence()){
+      abort();
+      return;
+    }
   }else if(asmstr == ""){ // Do nothing
   }else{
     throw std::logic_error("Unsupported inline assembly: "+asmstr);

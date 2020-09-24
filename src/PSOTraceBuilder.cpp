@@ -19,6 +19,7 @@
 
 #include "Debug.h"
 #include "PSOTraceBuilder.h"
+#include "TraceUtil.h"
 
 #include <sstream>
 #include <stdexcept>
@@ -104,10 +105,6 @@ bool PSOTraceBuilder::schedule(int *proc, int *aux, int *alt, bool *dryrun){
     --prefix_idx;
   }
 
-  /* Create a new Event */
-  ++prefix_idx;
-  assert(prefix_idx == int(prefix.size()));
-
   /* Find an available thread (auxiliary or real).
    *
    * Prioritize auxiliary before real, and older before younger
@@ -137,6 +134,10 @@ bool PSOTraceBuilder::schedule(int *proc, int *aux, int *alt, bool *dryrun){
   if(p < 0){ // No threads available
     return false;
   }
+
+ /* Create a new Event */
+  ++prefix_idx;
+  assert(prefix_idx == int(prefix.size()));
 
   ++threads[p].clock[p];
   prefix.push_back(Event(IID<IPid>(IPid(p),threads[p].clock[p]),
@@ -245,16 +246,16 @@ bool PSOTraceBuilder::check_for_cycles(){
 
 Trace *PSOTraceBuilder::get_trace() const{
   std::vector<IID<CPid> > cmp;
-  std::vector<const llvm::MDNode*> cmp_md;
+  SrcLocVectorBuilder cmp_md;
   std::vector<Error*> errs;
   for(unsigned i = 0; i < prefix.size(); ++i){
     cmp.push_back(IID<CPid>(threads[prefix[i].iid.get_pid()].cpid,prefix[i].iid.get_index()));
-    cmp_md.push_back(prefix[i].md);
+    cmp_md.push_from(prefix[i].md);
   }
   for(unsigned i = 0; i < errors.size(); ++i){
     errs.push_back(errors[i]->clone());
   }
-  Trace *t = new IIDSeqTrace(cmp,cmp_md,errs);
+  Trace *t = new IIDSeqTrace(cmp,cmp_md.build(),errs);
   t->set_blocked(!sleepset_is_empty());
   return t;
 }
@@ -400,7 +401,7 @@ void PSOTraceBuilder::debug_print() const {
   }
 }
 
-void PSOTraceBuilder::spawn(){
+bool PSOTraceBuilder::spawn(){
   IPid parent_ipid = curnode().iid.get_pid();
   IPid child_ipid = threads.size();
   CPid child_cpid = CPS.spawn(threads[parent_ipid].cpid);
@@ -411,10 +412,11 @@ void PSOTraceBuilder::spawn(){
   proc_to_ipid.push_back(child_ipid);
   threads.push_back(Thread(proc,child_cpid,threads[parent_ipid].clock,parent_ipid));
   mark_available_ipid(child_ipid);
+  return true;
 }
 
-void PSOTraceBuilder::store(const SymData &sd){
-  if(dryrun) return;
+bool PSOTraceBuilder::store(const SymData &sd){
+  if(dryrun) return true;
   const SymAddrSize &ml = sd.get_ref();
   IPid ipid = curnode().iid.get_pid();
   for(SymAddr b : ml){
@@ -434,9 +436,10 @@ void PSOTraceBuilder::store(const SymData &sd){
     upd_ipid = threads[ipid].aux_to_ipid[it->second];
   }
   mark_available_ipid(upd_ipid);
+  return true;
 }
 
-void PSOTraceBuilder::atomic_store(const SymData &sd){
+bool PSOTraceBuilder::atomic_store(const SymData &sd){
   const SymAddrSize &ml = sd.get_ref();
   if(dryrun){
     assert(prefix_idx+1 < int(prefix.size()));
@@ -446,7 +449,7 @@ void PSOTraceBuilder::atomic_store(const SymData &sd){
     for(SymAddr b : ml){
       A.insert(b);
     }
-    return;
+    return true;
   }
   IPid ipid = curnode().iid.get_pid();
   curnode().may_conflict = true;
@@ -526,18 +529,19 @@ void PSOTraceBuilder::atomic_store(const SymData &sd){
     }
     threads[tipid].aux_clock_sum += curnode().clock;
   }
+  return true;
 }
 
-void PSOTraceBuilder::compare_exchange
+bool PSOTraceBuilder::compare_exchange
 (const SymData &sd, const SymData::block_type expected, bool success){
   if(success){
-    atomic_store(sd);
+    return atomic_store(sd);
   }else{
-    load(sd.get_ref());
+    return load(sd.get_ref());
   }
 }
 
-void PSOTraceBuilder::load(const SymAddrSize &ml){
+bool PSOTraceBuilder::load(const SymAddrSize &ml){
   if(dryrun){
     assert(prefix_idx+1 < int(prefix.size()));
     assert(dry_sleepers <= prefix[prefix_idx+1].sleep.size());
@@ -546,7 +550,7 @@ void PSOTraceBuilder::load(const SymAddrSize &ml){
     for(SymAddr b : ml){
       A.insert(b);
     }
-    return;
+    return true;
   }
   curnode().may_conflict = true;
   IPid ipid = curnode().iid.get_pid();
@@ -559,7 +563,7 @@ void PSOTraceBuilder::load(const SymAddrSize &ml){
       assert(sb.size());
       assert(sb.back().ml == ml);
       sb.back().last_rowe = prefix_idx;
-      return;
+      return true;
     }
   }
 
@@ -595,15 +599,16 @@ void PSOTraceBuilder::load(const SymAddrSize &ml){
     mem[b].last_read[threads[ipid].proc] = prefix_idx;
     wakeup(Access::R,b);
   }
+  return true;
 }
 
-void PSOTraceBuilder::full_memory_conflict(){
+bool PSOTraceBuilder::full_memory_conflict(){
   if(dryrun){
     assert(prefix_idx+1 < int(prefix.size()));
     assert(dry_sleepers <= prefix[prefix_idx+1].sleep.size());
     IPid pid = prefix[prefix_idx+1].sleep[dry_sleepers-1];
     threads[pid].sleep_full_memory_conflict = true;
-    return;
+    return true;
   }
   curnode().may_conflict = true;
 
@@ -627,36 +632,39 @@ void PSOTraceBuilder::full_memory_conflict(){
 
   /* No later access can have a conflict with any earlier access */
   mem.clear();
+  return true;
 }
 
-void PSOTraceBuilder::fence(){
-  if(dryrun) return;
+bool PSOTraceBuilder::fence(){
+  if(dryrun) return true;
   IPid ipid = curnode().iid.get_pid();
   assert(!threads[ipid].cpid.is_auxiliary());
   assert(threads[ipid].all_buffers_empty());
   curnode().clock += threads[ipid].aux_clock_sum;
   threads[ipid].clock += threads[ipid].aux_clock_sum;
+  return true;
 }
 
-void PSOTraceBuilder::join(int tgt_proc){
-  if(dryrun) return;
+bool PSOTraceBuilder::join(int tgt_proc){
+  if(dryrun) return true;
   assert(0 <= tgt_proc && tgt_proc < int(proc_to_ipid.size()));
   IPid ipid = curnode().iid.get_pid();
   IPid tgt_ipid = proc_to_ipid[tgt_proc];
   curnode().clock += threads[tgt_ipid].clock;
   curnode().clock += threads[tgt_ipid].aux_clock_sum;
   threads[ipid].clock += curnode().clock;
+  return true;
 }
 
-void PSOTraceBuilder::mutex_lock(const SymAddrSize &ml){
+bool PSOTraceBuilder::mutex_lock(const SymAddrSize &ml){
   if(dryrun){
     assert(prefix_idx+1 < int(prefix.size()));
     assert(dry_sleepers <= prefix[prefix_idx+1].sleep.size());
     IPid pid = prefix[prefix_idx+1].sleep[dry_sleepers-1];
     threads[pid].sleep_accesses_w.insert(ml.addr);
-    return;
+    return true;
   }
-  fence();
+  if (!fence()) return false;
   curnode().may_conflict = true;
   wakeup(Access::W,ml.addr);
 
@@ -678,9 +686,10 @@ void PSOTraceBuilder::mutex_lock(const SymAddrSize &ml){
 
   mutex.last_lock = mutex.last_access = prefix_idx;
   mutex.locked = true;
+  return true;
 }
 
-void PSOTraceBuilder::mutex_lock_fail(const SymAddrSize &ml){
+bool PSOTraceBuilder::mutex_lock_fail(const SymAddrSize &ml){
   assert(!dryrun);
   assert(mutexes.count(ml.addr));
   Mutex &mutex = mutexes[ml.addr];
@@ -693,17 +702,18 @@ void PSOTraceBuilder::mutex_lock_fail(const SymAddrSize &ml){
      !prefix[last_full_memory_conflict].clock.leq(curnode().clock)){
     add_branch(last_full_memory_conflict,prefix_idx);
   }
+  return true;
 }
 
-void PSOTraceBuilder::mutex_unlock(const SymAddrSize &ml){
+bool PSOTraceBuilder::mutex_unlock(const SymAddrSize &ml){
   if(dryrun){
     assert(prefix_idx+1 < int(prefix.size()));
     assert(dry_sleepers <= prefix[prefix_idx+1].sleep.size());
     IPid pid = prefix[prefix_idx+1].sleep[dry_sleepers-1];
     threads[pid].sleep_accesses_w.insert(ml.addr);
-    return;
+    return true;
   }
-  fence();
+  if (!fence()) return false;
   assert(mutexes.count(ml.addr));
   Mutex &mutex = mutexes[ml.addr];
   curnode().may_conflict = true;
@@ -714,17 +724,18 @@ void PSOTraceBuilder::mutex_unlock(const SymAddrSize &ml){
 
   mutex.last_access = prefix_idx;
   mutex.locked = false;
+  return true;
 }
 
-void PSOTraceBuilder::mutex_trylock(const SymAddrSize &ml){
+bool PSOTraceBuilder::mutex_trylock(const SymAddrSize &ml){
   if(dryrun){
     assert(prefix_idx+1 < int(prefix.size()));
     assert(dry_sleepers <= prefix[prefix_idx+1].sleep.size());
     IPid pid = prefix[prefix_idx+1].sleep[dry_sleepers-1];
     threads[pid].sleep_accesses_w.insert(ml.addr);
-    return;
+    return true;
   }
-  fence();
+  if (!fence()) return false;
   assert(mutexes.count(ml.addr));
   curnode().may_conflict = true;
   wakeup(Access::W,ml.addr);
@@ -736,33 +747,35 @@ void PSOTraceBuilder::mutex_trylock(const SymAddrSize &ml){
     mutex.last_lock = prefix_idx;
     mutex.locked = true;
   }
+  return true;
 }
 
-void PSOTraceBuilder::mutex_init(const SymAddrSize &ml){
+bool PSOTraceBuilder::mutex_init(const SymAddrSize &ml){
   if(dryrun){
     assert(prefix_idx+1 < int(prefix.size()));
     assert(dry_sleepers <= prefix[prefix_idx+1].sleep.size());
     IPid pid = prefix[prefix_idx+1].sleep[dry_sleepers-1];
     threads[pid].sleep_accesses_w.insert(ml.addr);
-    return;
+    return true;
   }
-  fence();
+  if (!fence()) return false;
   curnode().may_conflict = true;
   Mutex &mutex = mutexes[ml.addr];
   see_events({mutex.last_access, last_full_memory_conflict});
 
   mutex.last_access = prefix_idx;
+  return true;
 }
 
-void PSOTraceBuilder::mutex_destroy(const SymAddrSize &ml){
+bool PSOTraceBuilder::mutex_destroy(const SymAddrSize &ml){
   if(dryrun){
     assert(prefix_idx+1 < int(prefix.size()));
     assert(dry_sleepers <= prefix[prefix_idx+1].sleep.size());
     IPid pid = prefix[prefix_idx+1].sleep[dry_sleepers-1];
     threads[pid].sleep_accesses_w.insert(ml.addr);
-    return;
+    return true;
   }
-  fence();
+  if (!fence()) return false;
   assert(mutexes.count(ml.addr));
   Mutex &mutex = mutexes[ml.addr];
   curnode().may_conflict = true;
@@ -771,6 +784,7 @@ void PSOTraceBuilder::mutex_destroy(const SymAddrSize &ml){
   see_events({mutex.last_access,last_full_memory_conflict});
 
   mutexes.erase(ml.addr);
+  return true;
 }
 
 bool PSOTraceBuilder::cond_init(const SymAddrSize &ml){
@@ -781,7 +795,7 @@ bool PSOTraceBuilder::cond_init(const SymAddrSize &ml){
     threads[pid].sleep_accesses_w.insert(ml.addr);
     return true;
   }
-  fence();
+  if (!fence()) return false;
   if(cond_vars.count(ml.addr)){
     pthreads_error("Condition variable initiated twice.");
     return false;
@@ -800,7 +814,7 @@ bool PSOTraceBuilder::cond_signal(const SymAddrSize &ml){
     threads[pid].sleep_accesses_w.insert(ml.addr);
     return true;
   }
-  fence();
+  if (!fence()) return false;
   curnode().may_conflict = true;
   wakeup(Access::W,ml.addr);
 
@@ -812,7 +826,7 @@ bool PSOTraceBuilder::cond_signal(const SymAddrSize &ml){
   CondVar &cond_var = it->second;
   VecSet<int> seen_events = {last_full_memory_conflict};
   if(cond_var.waiters.size() > 1){
-    register_alternatives(cond_var.waiters.size());
+    if (!register_alternatives(cond_var.waiters.size())) return false;
   }
   assert(0 <= curnode().alt);
   assert(cond_var.waiters.empty() || curnode().alt < int(cond_var.waiters.size()));
@@ -850,7 +864,7 @@ bool PSOTraceBuilder::cond_broadcast(const SymAddrSize &ml){
     threads[pid].sleep_accesses_w.insert(ml.addr);
     return true;
   }
-  fence();
+  if (!fence()) return false;
   curnode().may_conflict = true;
   wakeup(Access::W,ml.addr);
 
@@ -894,7 +908,7 @@ bool PSOTraceBuilder::cond_wait(const SymAddrSize &cond_ml, const SymAddrSize &m
     }
   }
 
-  mutex_unlock(mutex_ml);
+  if (!mutex_unlock(mutex_ml)) return false;
   if(dryrun){
     assert(prefix_idx+1 < int(prefix.size()));
     assert(dry_sleepers <= prefix[prefix_idx+1].sleep.size());
@@ -902,7 +916,7 @@ bool PSOTraceBuilder::cond_wait(const SymAddrSize &cond_ml, const SymAddrSize &m
     threads[pid].sleep_accesses_r.insert(cond_ml.addr);
     return true;
   }
-  fence();
+  if (!fence()) return false;
   curnode().may_conflict = true;
   wakeup(Access::R,cond_ml.addr);
 
@@ -922,8 +936,7 @@ bool PSOTraceBuilder::cond_wait(const SymAddrSize &cond_ml, const SymAddrSize &m
 }
 
 bool PSOTraceBuilder::cond_awake(const SymAddrSize &cond_ml, const SymAddrSize &mutex_ml){
-  mutex_lock(mutex_ml);
-  return true;
+  return mutex_lock(mutex_ml);
 }
 
 int PSOTraceBuilder::cond_destroy(const SymAddrSize &ml){
@@ -934,9 +947,8 @@ int PSOTraceBuilder::cond_destroy(const SymAddrSize &ml){
     threads[pid].sleep_accesses_w.insert(ml.addr);
     return 0;
   }
-  fence();
-
-  int err = (EBUSY == 1) ? 2 : 1; // Chose an error value different from EBUSY
+  const int err = (EBUSY == 1) ? 2 : 1; // Chose an error value different from EBUSY
+  if (!fence()) return err;
 
   curnode().may_conflict = true;
   wakeup(Access::W,ml.addr);
@@ -956,13 +968,14 @@ int PSOTraceBuilder::cond_destroy(const SymAddrSize &ml){
   return rv;
 }
 
-void PSOTraceBuilder::register_alternatives(int alt_count){
+bool PSOTraceBuilder::register_alternatives(int alt_count){
   curnode().may_conflict = true;
   if(curnode().alt == 0){
     for(int i = curnode().alt+1; i < alt_count; ++i){
       curnode().branch.insert(Branch({curnode().iid.get_pid(),i}));
     }
   }
+  return true;
 }
 
 VecSet<PSOTraceBuilder::IPid> PSOTraceBuilder::sleep_set_at(int i){

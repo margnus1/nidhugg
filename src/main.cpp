@@ -42,12 +42,6 @@ cl_input_file(llvm::cl::desc("<input bitcode or assembly>"),
 extern llvm::cl::list<std::string>
 cl_program_arguments;
 
-#ifndef NO_TIMING
-llvm::cl::opt<bool>
-cl_time("time", llvm::cl::desc("Print timing information."),
-        llvm::cl::NotHidden);
-#endif
-
 static Timing::Context global_timing_context("global");
 
 #ifdef LLVM_CL_VERSIONPRINTER_TAKES_RAW_OSTREAM
@@ -81,7 +75,7 @@ int main(int argc, char *argv[]){
     /* Hide all options defined by the LLVM library, except the ones
      * approved by Configuration.
      */
-    std::set<std::string> visible_options =
+    std::set<std::string, std::less<void>> visible_options =
       {"version"};
     visible_options.insert(Configuration::commandline_opts().begin(),
                            Configuration::commandline_opts().end());
@@ -162,7 +156,7 @@ int main(int argc, char *argv[]){
   }
 
 #ifndef NO_TIMING
-  if (cl_time)
+  if (Timing::timing_enabled())
     Timing::print_report();
 #endif
 

@@ -1,11 +1,11 @@
-language: C++
-sudo: false
+os: linux
+language: cpp
 addons:
   apt:
     packages: &baseline-packages
       - valgrind
 
-# Template some configurations for different distros, to be used in the matrix
+# Template some configurations for different distros, to be used in the jobs
 # below
 _xenial-conf: &xenial
   dist: xenial
@@ -28,17 +28,28 @@ _bionic-conf: &bionic
         - libboost-test-dev
         - libboost-system-dev
 
+_focal-conf: &focal
+  dist: focal
+  addons:
+    apt:
+      packages:
+        - *baseline-packages
+        - libboost-test-dev
+        - libboost-system-dev
+
 _bionic-clang-env-conf:
   env: &bionic-clang-env
     - CC=clang
     - CXX=clang++
 
-matrix:
+jobs:
   include:
-    - <<: *bionic
+    - <<: *focal
       env:
-        - LLVM_VERSION=10.0.0-rc2
+        - LLVM_VERSION=11.0.0-rc2
         - CONFIGURE_FLAGS=--disable-llvm-clang-version-check
+    - <<: *bionic
+      env: LLVM_VERSION=10.0.0
     - <<: *bionic
       env: LLVM_VERSION=9.0.0
     - <<: *bionic

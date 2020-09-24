@@ -139,46 +139,6 @@ Interpreter::Interpreter(Module *M, TSOPSOTraceBuilder &TB,
   IL = new IntrinsicLowering(TD);
 }
 
-static sigjmp_buf cf_env;
-
-static void cf_handler(int signum){
-  siglongjmp(cf_env,1);
-}
-
-static void CheckedFree(void *ptr, std::function<void()> &on_error){
-#ifdef HAVE_MALLOPT
-  mallopt(M_CHECK_ACTION,2);
-#endif
-  struct sigaction act, orig_act_segv, orig_act_abrt;
-  act.sa_handler = cf_handler;
-  act.sa_flags = SA_RESETHAND;
-  sigemptyset(&act.sa_mask);
-  if(sigaction(SIGABRT,&act,&orig_act_abrt)){
-    throw std::logic_error("Failed to setup signal handler.");
-  }
-  if(sigaction(SIGSEGV,&act,&orig_act_segv)){
-    throw std::logic_error("Failed to setup signal handler.");
-  }
-  if(sigsetjmp(cf_env,1)){
-    on_error();
-  }else{
-#ifdef HAVE_VALGRIND_VALGRIND_H
-    auto vg_error_count = VALGRIND_COUNT_ERRORS;
-    free(ptr);
-    if(vg_error_count < VALGRIND_COUNT_ERRORS){
-      on_error();
-    }
-#else
-    free(ptr);
-#endif
-  }
-  sigaction(SIGABRT,&orig_act_abrt,0);
-  sigaction(SIGSEGV,&orig_act_segv,0);
-#ifdef HAVE_MALLOPT
-  mallopt(M_CHECK_ACTION,3);
-#endif
-}
-
 Interpreter::~Interpreter() {
   delete IL;
   /* Remove module from ExecutionEngine's list of modules. This is to
@@ -193,23 +153,11 @@ Interpreter::~Interpreter() {
   }
 #endif
   Modules.clear();
-  std::function<void()> on_error0 =
-    [](){
-    throw std::logic_error("Failed to free memory at destruction of Interpreter.");
-  };
   for(void *ptr : AllocatedMemHeap){
-    if(!FreedMem.count(ptr)) CheckedFree(ptr,on_error0);
+    free(ptr);
   }
   for(void *ptr : AllocatedMemStack){
-    if(!FreedMem.count(ptr)) CheckedFree(ptr,on_error0);
-  }
-  TSOPSOTraceBuilder *TBptr = &TB;
-  for(auto it = FreedMem.begin(); it != FreedMem.end(); ++it){
-    std::function<void()> on_error =
-      [&it,TBptr](){
-      TBptr->memory_error("Failure at free.",it->second);
-    };
-    CheckedFree(it->first,on_error);
+    free(ptr);
   }
 }
 
@@ -234,6 +182,10 @@ Interpreter::runFunction(Function *F,
 #endif
   assert (F && "Function *F was null at entry to run()");
 
+  if (Blocked) {
+    return GenericValue();
+  }
+
   // Try extra hard not to pass extra args to a function that isn't
   // expecting them.  C programmers frequently bend the rules and
   // declare main() with fewer parameters than it actually gets
@@ -246,7 +198,12 @@ Interpreter::runFunction(Function *F,
   for (unsigned i = 0; i < ArgCount; ++i)
     ActualArgs.push_back(ArgValues[i]);
 
+  // Run on main thread
+  assert(CurrentThread == 0);
+  TB.mark_available(0);
+
   // Set up the function call.
+  assert(ECStack()->size() == 0);
   callFunction(F, ActualArgs);
 
   // Start executing the function.
