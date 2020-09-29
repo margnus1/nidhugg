@@ -1194,6 +1194,7 @@ bool RFSCTraceBuilder::can_swap_lock_by_vclocks(int f, int u, int s) const {
 }
 
 void RFSCTraceBuilder::compute_prefixes() {
+  prefix_idx = int(prefix.size());
   Timing::Guard analysis_timing_guard(analysis_context);
   compute_vclocks();
 
@@ -1242,6 +1243,7 @@ void RFSCTraceBuilder::compute_prefixes() {
       auto iidx = threads[pid].last_event_index()+1;
       assert(prefix_idx == int(prefix.size()));
       prefix.emplace_back(IID<IPid>(pid, iidx), 0, SymEv::LoadAwait(addr, cond));
+      ++prefix_idx;
       threads[pid].event_indices.push_back(i); // Not needed?
       compute_above_clock(i);
 
@@ -1278,9 +1280,10 @@ void RFSCTraceBuilder::compute_prefixes() {
         };
 
       const VClock<IPid> &above = prefix[i].above_clock;
+      bool found = false;
 
-      if (try_read_from(-1)) return;
-      for (unsigned p = 0; p < threads.size(); ++p) {
+      found |= try_read_from(-1);
+      for (unsigned p = 0; !found && p < threads.size(); ++p) {
         const std::vector<unsigned> &writes
           = writes_by_process_and_address[p][addr.addr];
         auto start = std::upper_bound(writes.begin(), writes.end(), above[p],
@@ -1289,16 +1292,19 @@ void RFSCTraceBuilder::compute_prefixes() {
                                       });
         if (start != writes.begin()) --start;
         for (auto it = start; it != writes.end(); ++it) {
-          if (try_read_from(*it)) return;
+          if ((found |= try_read_from(*it))) break;
         }
       }
 
       /* Cleanup dummy event */
       threads[pid].event_indices.pop_back();
+      --prefix_idx;
       prefix.pop_back();
+      if(found) return;
     }
   }
 
+  assert(prefix_idx == int(prefix.size()));
   /* No. Proceed with */
   for (unsigned i = 0; i < prefix.size(); ++i) {
     auto try_swap = [&](int i, int j) {
