@@ -1247,7 +1247,7 @@ void RFSCTraceBuilder::compute_prefixes() {
       threads[pid].event_indices.push_back(i); // Not needed?
       compute_above_clock(i);
 
-      std::shared_ptr<DecisionNode> decision;
+      std::shared_ptr<DecisionNode> &decision = prefix.back().decision_ptr;
 
       auto try_read_from = [&](int j) -> bool {
           assert(1);
