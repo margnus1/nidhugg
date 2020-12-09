@@ -20,7 +20,9 @@
 #include "AwaitCond.h"
 #include <cstring>
 #include <climits>
-#include <llvm/Support/Host.h>
+/* One of these contains llvm::sys::IsBigEndianHost */
+#include <llvm/Support/Host.h>          /* On llvm < 11 */
+#include <llvm/Support/SwapByteOrder.h> /* On llvm >= 11 */
 
 namespace {
   int smemcmp(const void *lhs, const void *rhs, std::size_t count) {

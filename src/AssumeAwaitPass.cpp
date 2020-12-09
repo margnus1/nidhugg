@@ -265,6 +265,9 @@ bool AssumeAwaitPass::tryRewriteAssume(llvm::Function *F, llvm::BasicBlock *BB, 
                    << ": Bad type " << Load->getType() << "\n";
       continue;
     }
+    assert(llvm::isa<llvm::FunctionType>(AwaitFunction->getType()));
+    llvm::FunctionType *AwaitFunctionType
+        = llvm::cast<llvm::FunctionType>(AwaitFunction->getType());
     llvm::dbgs() << "Wow, replacing " << *Load << " and " << *Call << " in " << F->getName() << "\n";
     llvm::IntegerType *i8Ty = llvm::Type::getInt8Ty(F->getParent()->getContext());
     llvm::ConstantInt *COp = llvm::ConstantInt::get(i8Ty, op);
@@ -272,7 +275,7 @@ bool AssumeAwaitPass::tryRewriteAssume(llvm::Function *F, llvm::BasicBlock *BB, 
     llvm::Value *Address = Load->getOperand(0);
     llvm::BasicBlock::iterator LI(Load);
     llvm::ReplaceInstWithInst(Load->getParent()->getInstList(), LI,
-                              llvm::CallInst::Create(AwaitFunction, {Address, COp, ArgVal, CMode}));
+                              llvm::CallInst::Create(AwaitFunctionType, AwaitFunction, {Address, COp, ArgVal, CMode}));
     return true;
   }
   if (blame_load)

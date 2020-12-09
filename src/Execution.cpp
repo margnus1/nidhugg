@@ -3306,10 +3306,10 @@ bool Interpreter::isPthreadMutexLock(Instruction &I, GenericValue **ptr){
 
 bool Interpreter::isLoadAwait(Instruction &I, GenericValue **ptr, AwaitCond *cond){
   if(!isa<CallInst>(I)) return false;
-  CallSite CS(static_cast<CallInst*>(&I));
-  Function *F = CS.getCalledFunction();
+  AnyCallInst CI(static_cast<CallInst*>(&I));
+  Function *F = CI.getCalledFunction();
   if(!F || F->getName().str().rfind("__VERIFIER_load_await", 0) != 0) return false;
-  auto args = CS.arg_begin();
+  auto args = CI.arg_begin();
   *ptr = (GenericValue*)GVTOP(getOperandValue(args[0],ECStack()->back()));
   uint64_t op_int = getOperandValue(args[1],ECStack()->back()).IntVal.getZExtValue();
   AwaitCond::Op op(static_cast<AwaitCond::Op>(op_int));
