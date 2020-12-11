@@ -21,7 +21,6 @@
 
 #include <llvm/Support/CommandLine.h>
 #include "Debug.h"
-#include "SmtlibSatSolver.h"
 
 /* Please keep (non-hidden) option names to 23 characters and
  * descriptions wrapped to 47 characters.
@@ -85,15 +84,6 @@ cl_memory_model(llvm::cl::NotHidden, llvm::cl::init(Configuration::MM_UNDEF),
 
 static llvm::cl::opt<bool> cl_c11("c11",llvm::cl::Hidden,
                                   llvm::cl::desc("Only consider c11 atomic accesses."));
-
-static llvm::cl::opt<Configuration::SatSolverEnum>
-cl_sat(llvm::cl::NotHidden, llvm::cl::init(Configuration::SMTLIB),
-       llvm::cl::desc("Select SAT solver"),
-       llvm::cl::values(clEnumValN(Configuration::SMTLIB,"smtlib","External SMTLib process")
-#ifdef LLVM_CL_VALUES_USES_SENTINEL
-                                ,clEnumValEnd
-#endif
-                                 ));
 
 
 static llvm::cl::opt<Configuration::DPORAlgorithm>
@@ -215,7 +205,7 @@ void Configuration::assign_by_commandline(){
   print_progress = cl_print_progress || cl_print_progress_estimate;
   print_progress_estimate = cl_print_progress_estimate;
   debug_print_on_reset = cl_debug_print_on_reset;
-  sat_solver = cl_sat;
+  // sat_solver = cl_sat;
   argv.resize(1);
   argv[0] = get_default_program_name();
   for(std::string a : cl_program_arguments){
@@ -335,8 +325,8 @@ void Configuration::check_commandline(){
 
 std::unique_ptr<SatSolver> Configuration::get_sat_solver() const {
   switch (sat_solver) {
-  case SMTLIB:
-    return std::make_unique<SmtlibSatSolver>();
   }
+  llvm::errs() << "Error: SC Consistency Decision Procedure required but not"
+    " implemented\n";
   abort();
 }

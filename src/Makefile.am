@@ -34,7 +34,6 @@ libnidhugg_a_SOURCES = \
   SatSolver.h \
   Seqno.h \
   SExpr.h SExpr.cpp \
-  SmtlibSatSolver.h SmtlibSatSolver.cpp \
   SpinAssumePass.cpp SpinAssumePass.h \
   StrModule.cpp StrModule.h \
   SymEv.cpp SymEv.h \
