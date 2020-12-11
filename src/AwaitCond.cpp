@@ -60,7 +60,10 @@ bool AwaitCond::satisfied_by(const void *data, std::size_t size) const {
 
 const char *AwaitCond::name(Op op) {
   const static char *names[] = {
-    nullptr, "UGT", "EQ", "UGE", "ULT", "NE", "ULE",
+    nullptr, "UGT",   "EQ",    "UGE",
+    "ULT",   "NE",    "ULE",   nullptr,
+    nullptr, "SGT",   nullptr, "SGE",
+    "SLT",   nullptr, "SLE",
   };
   return names[op];
 }
