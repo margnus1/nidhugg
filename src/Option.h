@@ -60,8 +60,8 @@ public:
   }
 
   /* Monadic bind; transform the value of the option (if any) */
-  template<typename F> auto map(F f) ->
-    Option<typename std::result_of<F(Value&)>::type> {
+  template<typename F> auto map(F f) const ->
+    Option<typename std::result_of<F(const Value&)>::type> {
     if (!has_value) return {};
     else return f(value);
   }

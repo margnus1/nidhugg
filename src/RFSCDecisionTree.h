@@ -35,12 +35,13 @@ struct DecisionNode;
 
 struct Branch {
 public:
-  Branch(int pid, int size, int decision_depth, bool pinned, SymEv sym)
+  Branch(int pid, int size, int decision_depth, bool pinned, SymEv sym,
+         bool blocked = false)
     : pid(pid), size(size), decision_depth(decision_depth), pinned(pinned),
-      sym(std::move(sym)) {}
+      blocked(blocked), sym(std::move(sym)) {}
   Branch() : Branch(-1, 0, -1, false, {}) {}
   int pid, size, decision_depth;
-  bool pinned;
+  bool pinned, blocked;
   SymEv sym;
 };
 

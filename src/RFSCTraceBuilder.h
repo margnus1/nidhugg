@@ -33,6 +33,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <boost/container/flat_map.hpp>
+#include <boost/variant/variant.hpp>
 
 
 class RFSCTraceBuilder final : public TSOPSOTraceBuilder{
@@ -234,8 +235,46 @@ protected:
   boost::container::flat_map<SymAddr, std::vector<IPid>> mutex_deadlocks;
 
   /* All currently blocking await statements */
-  boost::container::flat_map
-  <SymAddrSize, boost::container::flat_map<IPid, AwaitCond>> blocking_awaits;
+  struct BlockedAwait {
+    BlockedAwait(AwaitCond cond) : cond(std::move(cond)) {}
+    AwaitCond cond;
+    /* int index; // Maybe */
+    Option<unsigned> read_from;
+    // enum ReadFrom : int {
+    //   RF_UNDEF = -2,
+    //   RF_INIT = -1,
+    // } rf = RF_UNDEF;
+    std::shared_ptr<DecisionNode> decision_ptr;
+    int get_decision_depth() const {
+      return decision_ptr ? decision_ptr->depth : -1;
+    }
+    bool pinned = false;
+  };
+  typedef boost::container::flat_map
+  <SymAddrSize, boost::container::flat_map<IPid, BlockedAwait>>
+  blocking_awaits_ty;
+  blocking_awaits_ty blocking_awaits;
+
+  struct PlannedAwait {
+    PlannedAwait(IID<IPid> iid, std::shared_ptr<DecisionNode> decision_ptr,
+                 bool pinned)
+      : iid(iid), decision_ptr(std::move(decision_ptr)), pinned(pinned) {}
+    IID<IPid> iid;
+    std::shared_ptr<DecisionNode> decision_ptr;
+    bool pinned;
+    /* // Not needed? (except for assertions)
+       // ("No time for assertions" - Hans Zimmer)
+       SymAddr addr;
+       AwaitCond cond; */
+  };
+  /* planned_awaits are blocked awaits from the decision tree prefix,
+   * for "replay" */
+  std::vector<PlannedAwait> planned_awaits;
+
+  static std::shared_ptr<DecisionNode> depth_to_decision
+  (int depth, const std::shared_ptr<DecisionNode> &leaf) {
+    return depth == -1 ? nullptr : RFSCDecisionTree::find_ancestor(leaf, depth);
+  }
 
   /* Information about a (short) sequence of consecutive events by the
    * same thread. At most one event in the sequence may have conflicts
@@ -303,6 +342,7 @@ protected:
     std::shared_ptr<DecisionNode> decision_ptr;
 
     int get_decision_depth() const {
+      assert(decision_depth == (decision_ptr ? decision_ptr->depth : -1));
       return decision_depth;
     };
     void set_decision(std::shared_ptr<DecisionNode> decision) {
@@ -311,7 +351,7 @@ protected:
     };
     void set_branch_decision(int decision, const std::shared_ptr<DecisionNode> &work_item) {
       decision_depth = decision;
-      decision_ptr = decision == -1 ? nullptr : RFSCDecisionTree::find_ancestor(work_item, decision_depth);
+      decision_ptr = depth_to_decision(decision, work_item);
     };
 
   private:
@@ -397,6 +437,10 @@ protected:
   std::string iid_string(std::size_t pos) const;
   /* Pretty-prints the iid of event. */
   std::string iid_string(const Event &event) const;
+  /* Pretty-prints the iid of trace.prefix_at(pos). */
+  std::string iid_string(const TraceOverlay &trace, std::size_t pos) const;
+  /* Pretty-prints an iid in a trace. */
+  std::string iid_string(const TraceOverlay &trace, IID<IPid> iid) const;
   /* Pretty-prints an iid. */
   std::string iid_string(IID<IPid> iid) const;
   /* Adds a reversible co-enabled happens-before edge between the
@@ -431,6 +475,11 @@ protected:
   int compute_above_clock(VClock<IPid> &clock, IID<IPid> iid,
                           const std::vector<unsigned> &happens_after) const;
   void maybe_add_spawn_happens_after(unsigned event);
+
+  /* Check whether some event would happen-before a blocked event,
+   * should it be executed */
+  bool check_happens_before_blocked(IID<IPid> event, IPid blocked,
+                                    const SymAddr &blocked_on_addr) const;
   /* Assigns unfolding events to all executed steps. */
   void compute_unfolding();
 
@@ -555,6 +604,7 @@ public:
     unsigned find_process_event(IPid pid, int index) const;
 
     writes_by_addr_ty writes_by_addr;
+    blocking_awaits_ty blocking_awaits;
 
   private:
     boost::container::flat_map<unsigned,TraceEvent> prefix_overlay;
@@ -572,13 +622,35 @@ protected:
    * multiple threads concurrently. therefore need to be under exclusive opreation.
    */
   const SaturatedGraph &get_cached_graph(DecisionNode &decision,
-                                         const TraceOverlay &trace);
+                                         const TraceOverlay &trace) const;
 
-  Leaf try_sat(std::initializer_list<unsigned> changed,
+  struct FilteredAwait {
+    FilteredAwait(const SymAddrSize &addr,
+                  const std::pair<IPid,BlockedAwait> &pid_await)
+      : addr(addr), pid_await(pid_await) {}
+    const SymAddrSize &addr;
+    const std::pair<IPid,BlockedAwait> &pid_await;
+  };
+  typedef std::vector<FilteredAwait> filtered_awaits_ty;
+  std::vector<bool> causal_past(int decision, const TraceOverlay &trace,
+                                bool include_blocked_awaits = false,
+                                filtered_awaits_ty *awaits_out = nullptr) const;
+
+  enum class LastChangeKind : int {
+    PREFIX,
+    BLOCKED,
+  };
+  struct BlockedChange {
+    SymAddrSize addr;
+    IPid pid;
+  };
+  typedef boost::variant<unsigned, BlockedChange> last_change_ty;
+
+  Leaf try_sat(unsigned last_change,
                const TraceOverlay &trace);
-  Leaf order_to_leaf(int decision, std::initializer_list<unsigned> changed,
-                     const TraceOverlay &trace,
-                     const std::vector<unsigned> order) const;
+  Leaf order_to_leaf(int decision, const TraceOverlay &trace,
+                     const std::vector<unsigned> order,
+                     filtered_awaits_ty awaits) const;
   static void output_formula(SatSolver &sat, const TraceOverlay &trace,
                              const std::vector<bool> &);
   /* Estimate the total number of traces that have the same prefix as

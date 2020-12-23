@@ -91,12 +91,22 @@ bool RFSCTraceBuilder::schedule(int *proc, int *aux, int *alt, bool *dryrun){
       threads[pid].event_indices.push_back(prefix_idx);
       return true;
     } else if(prefix_idx + 1 == int(prefix.size())) {
-      /* We are done replaying. Continue below... */
-      assert(prefix_idx < 0 || (curev().sym.empty() ^ seen_effect)
-             || (errors.size() && errors.back()->get_location()
-                 == IID<CPid>(threads[curev().iid.get_pid()].cpid,
-                              curev().iid.get_index())));
-      replay = false;
+      if (planned_awaits.empty()) {
+        /* We are done replaying. Continue below... */
+        assert(prefix_idx < 0 || (curev().sym.empty() ^ seen_effect)
+               || (errors.size() && errors.back()->get_location()
+                   == IID<CPid>(threads[curev().iid.get_pid()].cpid,
+                                curev().iid.get_index())));
+        replay = false;
+      } else {
+        /* We'll replay an event from planned_awaits */
+        PlannedAwait &plan = planned_awaits.back();
+        prefix.emplace_back(plan.iid);
+        prefix.back().pinned = plan.pinned;
+        prefix.back().set_decision(std::move(plan.decision_ptr));
+        planned_awaits.pop_back();
+        ++prefix_idx;
+      }
     } else {
       /* Go to the next event. */
       assert(prefix_idx < 0 || (curev().sym.empty() ^ seen_effect)
@@ -246,18 +256,23 @@ bool RFSCTraceBuilder::reset(){
 
   replay_point = l.prefix.size();
 
+  assert(planned_awaits.empty());
   std::vector<Event> new_prefix;
-  new_prefix.reserve(l.prefix.size());
+  new_prefix.reserve(l.prefix.size()); // Overestimate; also includes blocked events
   std::vector<int> iid_map;
   for (Branch &b : l.prefix) {
     int index = (int(iid_map.size()) <= b.pid) ? 1 : iid_map[b.pid];
     IID<IPid> iid(b.pid, index);
-    new_prefix.emplace_back(iid);
-    new_prefix.back().size = b.size;
-    new_prefix.back().sym = std::move(b.sym);
-    new_prefix.back().pinned = b.pinned;
-    new_prefix.back().set_branch_decision(b.decision_depth, work_item);
-    iid_map_step(iid_map, new_prefix.back());
+    if (b.blocked) {
+      planned_awaits.emplace_back(iid, depth_to_decision(b.decision_depth, work_item), b.pinned);
+    } else {
+      new_prefix.emplace_back(iid);
+      new_prefix.back().size = b.size;
+      new_prefix.back().sym = std::move(b.sym);
+      new_prefix.back().pinned = b.pinned;
+      new_prefix.back().set_branch_decision(b.decision_depth, work_item);
+      iid_map_step(iid_map, new_prefix.back());
+    }
   }
 
 #ifndef NDEBUG
@@ -324,6 +339,28 @@ std::string RFSCTraceBuilder::iid_string(const Event &event) const{
 
 std::string RFSCTraceBuilder::iid_string(IID<IPid> iid) const{
   return iid_string(find_process_event(iid.get_pid(), iid.get_index()));
+}
+
+std::string RFSCTraceBuilder::iid_string(const TraceOverlay &trace,
+                                         IID<IPid> iid) const {
+  return iid_string(trace, trace.find_process_event(iid.get_pid(), iid.get_index()));
+}
+
+std::string RFSCTraceBuilder::iid_string(const TraceOverlay &trace,
+                                         std::size_t pos) const {
+  TraceOverlay::TraceEventConstRef event = trace.prefix_at(pos);
+  IPid pid = event.iid().get_pid();
+  int index = event.iid().get_index();
+  std::stringstream ss;
+  ss << "(" << threads[pid].cpid << "," << index;
+  if(event.size() > 1){
+    ss << "-" << index + event.size() - 1;
+  }
+  ss << ")";
+  // if(event.alt != 0){
+  //   ss << "-alt:" << event.alt;
+  // }
+  return ss.str();
 }
 
 void RFSCTraceBuilder::debug_print() const {
@@ -439,7 +476,12 @@ bool RFSCTraceBuilder::load_await(const SymAddrSize &ml, AwaitCond cond) {
   auto ml_await = blocking_awaits.find(ml);
   if (ml_await != blocking_awaits.end()) {
     IPid current = curev().iid.get_pid();
-    ml_await->second.erase(current);
+    auto it = ml_await->second.find(current);
+    if (it->second.decision_ptr) {
+      invalid_input_error("Not implemented: decision-tree jumping");
+      return false;
+    }
+    ml_await->second.erase(it);
     /* Delete the memory location if it became empty */
     if (ml_await->second.empty())
       blocking_awaits.erase(ml_await);
@@ -461,7 +503,12 @@ bool RFSCTraceBuilder::load_await_fail(const SymAddrSize &ml, AwaitCond cond) {
                  << "\n";
 
   assert(ml_awaits.count(current) == 0);
-  ml_awaits.emplace(current, std::move(cond));
+  auto ret = ml_awaits.emplace(current, std::move(cond));
+  if (replay) {
+    BlockedAwait &aw = ret.first->second;
+    aw.pinned = curev().pinned;
+    aw.decision_ptr = std::move(curev().decision_ptr);
+  }
   return true;
 }
 
@@ -972,6 +1019,28 @@ void RFSCTraceBuilder::compute_unfolding() {
       }
     }
   }
+  for (auto &addr_awaits : blocking_awaits) {
+    const SymAddrSize &addr = addr_awaits.first;
+    for (auto &pid_cond : addr_awaits.second) {
+      BlockedAwait &aw = pid_cond.second;
+      assert(!(aw.pinned && aw.decision_ptr)); // Case not handled
+      if (!aw.pinned) {
+        /* XXX: Unnecessary insertion */
+        aw.read_from = mem[addr.addr].last_update;
+        const std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> &decision
+          = aw.read_from == 0 ? nullptr : prefix[aw.read_from].event;
+        if (aw.decision_ptr) {
+          if (aw.decision_ptr->unfold_node != decision) {
+            llvm::dbgs() << "Not implemented: Decision-tree jump";
+            abort();
+          }
+        } else {
+          deepest_node = decision_tree.new_decision_node(std::move(deepest_node), decision);
+          aw.decision_ptr = deepest_node;
+        }
+      }
+    }
+  }
   work_item = std::move(deepest_node);
 }
 
@@ -1275,12 +1344,12 @@ void RFSCTraceBuilder::compute_prefixes() {
   // }
 
   /* See if any blocking await can be satisfied */
-  for (const auto &addr_awaits : blocking_awaits) {
+  for (auto &addr_awaits : blocking_awaits) {
     const SymAddrSize &addr = addr_awaits.first;
-    for (const auto &pid_cond : addr_awaits.second) {
+    for (auto &pid_cond : addr_awaits.second) {
       TraceOverlay ol(this, writes_by_address);
       IPid pid = pid_cond.first;
-      const AwaitCond &cond = pid_cond.second;
+      const AwaitCond &cond = pid_cond.second.cond;
       unsigned i = prefix_idx;
       assert(i == prefix.size());
       auto iidx = threads[pid].last_event_index()+1;
@@ -1288,30 +1357,26 @@ void RFSCTraceBuilder::compute_prefixes() {
       auto &e = ol.prefix_emplace_back(IID<IPid>(pid, iidx),
                                        SymEv::LoadAwait(addr, cond));
       maybe_add_spawn_happens_after(e);
+      ol.blocking_awaits[addr].erase(pid);
 
-      std::shared_ptr<DecisionNode> decision;
+      std::shared_ptr<DecisionNode> decision = pid_cond.second.decision_ptr;
+      e.decision_ptr = decision.get();
+      e.decision_depth = e.decision_ptr->depth;
 
       auto try_read_from = [&](int j) -> bool {
           assert(1);
           if (!rf_satisfies_cond(ol, i, j)) return false;
           const std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> &alt
             = prefix[i].event = unfold_find_unfolding_node(pid, iidx, j);
-          if (!decision) {
-            /* We're pulling it out of our ass! How can we avoid
-               redundant checking? */
-            decision = decision_tree.new_decision_node(work_item, alt);
-            e.decision_ptr = decision.get();
-            e.decision_depth = decision->depth;
-          } else if (!decision->try_alloc_unf(alt)) {
-            return false;
-          }
+          assert(decision);
+          if (!decision->try_alloc_unf(alt)) return false;
 
           if (conf.debug_print_on_reset)
             llvm::dbgs() << "Trying to satisfy deadlocked " << pretty_index(i)
                          << " reading from " << pretty_index(j);
           e.read_from = j;
 
-          Leaf solution = try_sat({i}, ol);
+          Leaf solution = try_sat(i, ol);
           if (solution.is_bottom()) return false;
 
           /* We can satisfy this await. Commit to the decision node we
@@ -1365,7 +1430,7 @@ void RFSCTraceBuilder::compute_prefixes() {
         ol.prefix_mut(j).read_from = original_read_from;
         ol.prefix_mut(i).decision_swap(ol.prefix_mut(j));
 
-        Leaf solution = try_sat({unsigned(j)}, ol);
+        Leaf solution = try_sat(j, ol);
         if (!solution.is_bottom()) {
           decision_tree.construct_sibling(decision, std::move(alt),
                                           std::move(solution));
@@ -1389,7 +1454,7 @@ void RFSCTraceBuilder::compute_prefixes() {
         ol.prefix_mut(j).read_from = original_read_from;
         ol.prefix_mut(i).decision_swap(ol.prefix_mut(j));
 
-        Leaf solution = try_sat({unsigned(j)}, ol);
+        Leaf solution = try_sat(j, ol);
         if (!solution.is_bottom()) {
           decision_tree.construct_sibling(decision, std::move(alt),
                                           std::move(solution));
@@ -1424,7 +1489,7 @@ void RFSCTraceBuilder::compute_prefixes() {
           assert(!ol.prefix_at(i).pinned());
           ol.prefix_mut(i).pinned = true;
 
-          Leaf solution = try_sat({unsigned(j)}, ol);
+          Leaf solution = try_sat(j, ol);
           if (!solution.is_bottom()) {
             decision_tree.construct_sibling(decision, std::move(alt),
                                             std::move(solution));
@@ -1496,7 +1561,7 @@ void RFSCTraceBuilder::compute_prefixes() {
         recompute_cmpxhg_success(j, ol);
         recompute_cmpxhg_success(i, ol);
 
-        Leaf solution = try_sat({unsigned(j), i}, ol);
+        Leaf solution = try_sat(i, ol);
         if (!solution.is_bottom()) {
           decision_tree.construct_sibling(decision, std::move(read_from),
                                           std::move(solution));
@@ -1525,7 +1590,7 @@ void RFSCTraceBuilder::compute_prefixes() {
           ol.prefix_mut(i).read_from = j;
           recompute_cmpxhg_success(i, ol);
 
-          Leaf solution = try_sat({i}, ol);
+          Leaf solution = try_sat(i, ol);
           if (!solution.is_bottom()) {
             decision_tree.construct_sibling(decision, read_from, std::move(solution));
             tasks_created++;
@@ -1658,14 +1723,11 @@ static void add_event_to_graph(SaturatedGraph &g, const RFSCTraceBuilder::TraceO
                              [&trace](unsigned j){return trace.prefix_at(j).iid();}));
 }
 
-static std::vector<bool>
-causal_past(int decision, const RFSCTraceBuilder::TraceOverlay &trace);
-
 const SaturatedGraph &RFSCTraceBuilder::get_cached_graph
-(DecisionNode &decision, const TraceOverlay &trace) {
+(DecisionNode &decision, const TraceOverlay &trace) const {
   const int depth = decision.depth;
   return decision.get_saturated_graph(
-    [depth, &trace](SaturatedGraph &g) {
+    [this, depth, &trace](SaturatedGraph &g) {
       std::vector<bool> keep = causal_past(depth-1, trace);
       for (unsigned i = 0; i < trace.prefix_size(); ++i) {
         if (keep[i] && !g.has_event(trace.prefix_at(i).iid())) {
@@ -1680,21 +1742,40 @@ const SaturatedGraph &RFSCTraceBuilder::get_cached_graph
 
 Leaf
 RFSCTraceBuilder::try_sat
-(std::initializer_list<unsigned> changed_events,
- const TraceOverlay &trace){
+(unsigned last_change, const TraceOverlay &trace){
   Timing::Guard timing_guard(graph_context);
-  unsigned last_change = changed_events.end()[-1];
   DecisionNode &decision = *trace.prefix_at(last_change).decision_ptr();
   int decision_depth = decision.depth;
-  std::vector<bool> keep = causal_past(decision_depth, trace);
+  filtered_awaits_ty awaits;
+  std::vector<bool> keep = causal_past(decision_depth, trace, true, &awaits);
 
-  SaturatedGraph g(get_cached_graph(decision, trace).clone());
+  /* Caching not implemented for blocked awaits */
+  SaturatedGraph g; // (get_cached_graph(decision, trace).clone());
   for (unsigned i = 0; i < trace.prefix_size(); ++i) {
     if (keep[i] && i != last_change && !g.has_event(trace.prefix_at(i).iid())) {
       add_event_to_graph(g, trace, i);
     }
   }
   add_event_to_graph(g, trace, last_change);
+  if (!awaits.empty()) {
+    /* All awaits happen after all other events. */
+    std::vector<IID<IPid>> happens_after;
+    happens_after.reserve(threads.size());
+    for (IPid p = 0; p < IPid(threads.size()); ++p) {
+      int index = threads[p].last_event_index();
+      if (index != 0) {
+        happens_after.emplace_back(p, index);
+      }
+    }
+    for (const auto &await : awaits) {
+      IPid pid = await.pid_await.first;
+      Option<IID<IPid>> read_from = await.pid_await.second.read_from.map
+        ([&](unsigned ix) { return trace.prefix_at(ix).iid(); });
+      IID<IPid> iid(pid, threads[pid].last_event_index()+1);
+      g.add_event(pid, iid, SaturatedGraph::LOAD, await.addr.addr, read_from,
+                  happens_after);
+    }
+  }
   if (!g.saturate()) {
     if (conf.debug_print_on_reset)
       llvm::dbgs() << ": Saturation yielded cycle\n";
@@ -1709,21 +1790,22 @@ RFSCTraceBuilder::try_sat
       llvm::dbgs() << ": Heuristic found prefix\n";
       llvm::dbgs() << "[";
       for (IID<int> iid : *res) {
-        llvm::dbgs() << iid_string(iid) << ",";
+        llvm::dbgs() << iid_string(trace, iid) << ",";
       }
       llvm::dbgs() << "]\n";
     }
+    res->resize(res->size() - awaits.size()); // Drop blocked events from order
     std::vector<unsigned> order = map(*res, [&trace](IID<int> iid) {
       return trace.find_process_event(iid.get_pid(), iid.get_index());
     });
-    return order_to_leaf(decision_depth, changed_events, trace,
-                         std::move(order));
+    return order_to_leaf(decision_depth, trace, std::move(order), awaits);
   }
 
   std::unique_ptr<SatSolver> sat = conf.get_sat_solver();
   {
     Timing::Guard timing_guard(sat_context);
 
+    // XXX: We're not outputting blocked awaits
     output_formula(*sat, trace, keep);
     //output_formula(std::cerr, writes_by_address, keep);
 
@@ -1756,17 +1838,16 @@ RFSCTraceBuilder::try_sat
     llvm::dbgs() << "]\n";
   }
 
-  return order_to_leaf(decision_depth, changed_events, trace, std::move(order));
+  /* XXX: Not handling blocked awaits */
+  return order_to_leaf(decision_depth, trace, std::move(order), {});
 }
 
 Leaf RFSCTraceBuilder::order_to_leaf
-(int decision, std::initializer_list<unsigned> changed,
- const TraceOverlay &trace, const std::vector<unsigned> order) const{
+(int decision, const TraceOverlay &trace, const std::vector<unsigned> order,
+ filtered_awaits_ty awaits) const {
   std::vector<Branch> new_prefix;
-  new_prefix.reserve(order.size());
+  new_prefix.reserve(order.size()+awaits.size());
   for (unsigned i : order) {
-    bool is_changed = std::any_of(changed.begin(), changed.end(),
-                                  [i](unsigned c) { return c == i; });
     bool new_pinned = trace.prefix_at(i).pinned() || (trace.prefix_at(i).decision_depth() > decision);
     int new_decision = trace.prefix_at(i).decision_depth();
     if (new_decision > decision) {
@@ -1774,10 +1855,19 @@ Leaf RFSCTraceBuilder::order_to_leaf
       new_decision = -1;
     }
     new_prefix.emplace_back(trace.prefix_at(i).iid().get_pid(),
-                            is_changed ? 1 : trace.prefix_at(i).size(),
+                            trace.prefix_at(i).size(),
                             new_decision,
                             new_pinned,
                             trace.prefix_at(i).sym());
+  }
+  for (const auto &await : awaits) {
+    assert(await.pid_await.second.get_decision_depth() <= decision);
+    new_prefix.emplace_back(await.pid_await.first,
+                            1,
+                            await.pid_await.second.get_decision_depth(),
+                            await.pid_await.second.pinned, // Wait, can they even get pinned?
+                            SymEv(),
+                            /*blocked=*/true);
   }
 
   return Leaf(new_prefix);
@@ -1800,19 +1890,40 @@ static void causal_past_1(std::vector<bool> &acc, unsigned i,
   }
 }
 
-static std::vector<bool>
-causal_past(int decision, const RFSCTraceBuilder::TraceOverlay &trace) {
+std::vector<bool>
+RFSCTraceBuilder::causal_past(int decision, const TraceOverlay &trace,
+            bool include_blocked_awaits, filtered_awaits_ty *awaits_out) const {
   std::vector<bool> acc(trace.prefix_size());
   for (unsigned i = 0; i < trace.prefix_size(); ++i) {
     assert(!((trace.prefix_at(i).decision_depth() != -1)
              && trace.prefix_at(i).pinned()));
-    assert(is_load(trace, i) == ((trace.prefix_at(i).decision_depth() != -1)
-                                 || trace.prefix_at(i).pinned()));
+    assert(::is_load(trace, i) == ((trace.prefix_at(i).decision_depth() != -1)
+                                   || trace.prefix_at(i).pinned()));
     if (trace.prefix_at(i).decision_depth() != -1
         && trace.prefix_at(i).decision_depth() <= decision) {
       causal_past_1(acc, i, trace);
     }
-  };
+  }
+  if (include_blocked_awaits) {
+    for (const auto &addr_awaits : trace.blocking_awaits) {
+      for (const auto &pid_await : addr_awaits.second) {
+        IPid p = pid_await.first;
+        const BlockedAwait &await = pid_await.second;
+        assert(await.pinned || await.decision_ptr);
+        if (!await.pinned && await.get_decision_depth() <= decision) {
+          if (threads[p].event_indices.size() > 0) {
+            unsigned i = trace.find_process_event(p, threads[p].last_event_index());
+            causal_past_1(acc, i, trace);
+          }
+          if (awaits_out) {
+            awaits_out->emplace_back(addr_awaits.first, pid_await);
+          }
+        }
+      }
+    }
+  } else {
+    assert(!awaits_out);
+  }
   return acc;
 }
 
@@ -1968,11 +2079,13 @@ TraceOverlay(const RFSCTraceBuilder *tb, const writes_by_addr_ty &writes,
 RFSCTraceBuilder::TraceOverlay::
 TraceOverlay(const RFSCTraceBuilder *tb, writes_by_addr_ty &&writes,
              std::initializer_list<unsigned> preallocate)
-  : writes_by_addr(std::move(writes)), _prefix_size(tb->prefix.size()), tb(tb) {
+  : writes_by_addr(std::move(writes)), blocking_awaits(tb->blocking_awaits),
+    _prefix_size(tb->prefix.size()), tb(tb) {
   prefix_overlay.reserve(preallocate.size());
   for (unsigned i : preallocate) {
     /* Assume that preallocate is sorted */
-    prefix_overlay.try_emplace(prefix_overlay.end(), i, tb->prefix[i]);
+    auto it = prefix_overlay.try_emplace(prefix_overlay.end(), i, tb->prefix[i]);
+    it->second.size = 1;
   }
 }
 
