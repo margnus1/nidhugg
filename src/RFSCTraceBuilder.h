@@ -98,6 +98,8 @@ public:
   /* Active work item, signifies the leaf of an exploration.*/
   std::shared_ptr<DecisionNode> work_item;
 
+  struct TraceOverlay;
+
 protected:
   /* An identifier for a thread. An index into this->threads.
    *
@@ -426,6 +428,9 @@ protected:
    */
   void compute_vclocks();
   int compute_above_clock(unsigned event);
+  int compute_above_clock(VClock<IPid> &clock, IID<IPid> iid,
+                          const std::vector<unsigned> &happens_after) const;
+  void maybe_add_spawn_happens_after(unsigned event);
   /* Assigns unfolding events to all executed steps. */
   void compute_unfolding();
 
@@ -447,11 +452,13 @@ protected:
    * (if any).
    */
   bool rf_satisfies_cond(int r, int w) const;
+  static bool rf_satisfies_cond(const TraceOverlay &trace, int r, int w);
   /* Assuming that r and w are RMW, that r immediately preceeds w in
    * coherence order, checks whether swapping r and w is possible
    * according to the vector clocks.
    */
   bool can_swap_by_vclocks(int r, int w) const;
+  bool can_swap_by_vclocks(int r, const VClock<IPid> &w_above_clock) const;
   /* Assuming that f and s are MLock, that u is MUnlock, s rf u rf f,
    * checks whether swapping f and s is possible according to the vector
    * clocks.
@@ -470,6 +477,7 @@ public:
    */
   struct TraceOverlay {
     struct TraceEvent {
+      TraceEvent(const IID<IPid> &iid, SymEv sym = {});
       TraceEvent(const Event &event);
       TraceEvent(TraceEvent &&) = default;
       TraceEvent &operator=(TraceEvent&&) = default;
@@ -480,8 +488,9 @@ public:
       DecisionNode *decision_ptr;
       SymEv sym;
       Option<int> read_from;
-      const std::vector<unsigned> &happens_after() const;
+      std::vector<unsigned> happens_after;
 
+      void add_happens_after(unsigned other);
       void decision_swap(TraceEvent &e);
 
     private:
@@ -534,17 +543,30 @@ public:
     std::size_t prefix_size() const;
     TraceEventConstRef prefix_at(unsigned index) const;
     TraceEvent &prefix_mut(unsigned index);
+    template <typename... Args>
+    TraceEvent &prefix_emplace_back(Args&&... args) {
+      auto ret = prefix_overlay.try_emplace(_prefix_size++,
+                                            std::forward<Args>(args)...);
+      assert(ret.second);
+      return ret.first->second;
+    }
 
     Option<unsigned> po_predecessor(unsigned i) const;
+    unsigned find_process_event(IPid pid, int index) const;
 
     writes_by_addr_ty writes_by_addr;
 
   private:
     boost::container::flat_map<unsigned,TraceEvent> prefix_overlay;
+    std::size_t _prefix_size;
     const RFSCTraceBuilder *tb;
   };
 
 protected:
+  void maybe_add_spawn_happens_after(TraceOverlay::TraceEvent &event) const;
+  VClock<IPid> compute_above_clock(TraceOverlay::TraceEventConstRef event)
+    const;
+
   /* Access a SaturatedGraph from a DecisionNode.
    * This has the risk of mutating a graph which is accessed by
    * multiple threads concurrently. therefore need to be under exclusive opreation.

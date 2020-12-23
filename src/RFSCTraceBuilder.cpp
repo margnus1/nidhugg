@@ -819,32 +819,76 @@ static It frontier_filter(It first, It last, LessFn less){
   return fill;
 }
 
-int RFSCTraceBuilder::compute_above_clock(unsigned i) {
-  int last = -1;
-  IPid ipid = prefix[i].iid.get_pid();
-  int iidx = prefix[i].iid.get_index();
-  if (iidx > 1) {
-    last = find_process_event(ipid, iidx-1);
-    prefix[i].clock = prefix[last].clock;
-  } else {
-    prefix[i].clock = VClock<IPid>();
+void RFSCTraceBuilder::
+maybe_add_spawn_happens_after(TraceOverlay::TraceEvent &event) const {
+  const auto &iid = event.iid;
+  IPid ipid = iid.get_pid();
+  int iidx = iid.get_index();
+  if (iidx <= 1) {
+    assert(iidx == 1);
     const Thread &t = threads[ipid];
-  /* The first event of a thread happens after the spawn event that
-   * created it.
-   */
+    /* The first event of a thread happens after the spawn event that
+     * created it.
+     */
+    if (t.spawn_event >= 0) {
+      event.add_happens_after(t.spawn_event);
+    }
+  }
+}
+
+void RFSCTraceBuilder::maybe_add_spawn_happens_after(unsigned i) {
+  const auto &iid = prefix[i].iid;
+  IPid ipid = iid.get_pid();
+  int iidx = iid.get_index();
+  if (iidx <= 1) {
+    assert(iidx == 1);
+    const Thread &t = threads[ipid];
+    /* The first event of a thread happens after the spawn event that
+     * created it.
+     */
     if (t.spawn_event >= 0)
       add_happens_after(i, t.spawn_event);
   }
-  prefix[i].clock[ipid] = iidx;
+}
+
+int RFSCTraceBuilder::
+compute_above_clock(VClock<IPid> &clock, IID<IPid> iid,
+                    const std::vector<unsigned> &happens_after) const{
+  int last = -1;
+  IPid ipid = iid.get_pid();
+  int iidx = iid.get_index();
+  if (iidx > 1) {
+    last = find_process_event(ipid, iidx-1);
+    clock = prefix[last].clock;
+  } else {
+    clock = VClock<IPid>();
+  }
+  clock[ipid] = iidx;
 
   /* First add the non-reversible edges */
-  for (unsigned j : prefix[i].happens_after){
-    assert(j < i);
-    prefix[i].clock += prefix[j].clock;
+  for (unsigned j : happens_after){
+    clock += prefix[j].clock;
   }
 
+  return last;
+}
+
+int RFSCTraceBuilder::compute_above_clock(unsigned i) {
+#ifndef NDEBUG
+  for (unsigned j : prefix[i].happens_after) assert(j < i);
+#endif
+
+  int last = compute_above_clock(prefix[i].clock, prefix[i].iid,
+                                 prefix[i].happens_after);
   prefix[i].above_clock = prefix[i].clock;
   return last;
+}
+
+VClock<int> RFSCTraceBuilder::
+compute_above_clock(TraceOverlay::TraceEventConstRef event) const {
+  VClock<IPid> clock;
+  compute_above_clock(clock, event.iid(), event.happens_after());
+  return clock;
 }
 
 void RFSCTraceBuilder::compute_vclocks(){
@@ -853,6 +897,7 @@ void RFSCTraceBuilder::compute_vclocks(){
   std::vector<llvm::SmallVector<unsigned,2>> happens_after(prefix.size());
   for (unsigned i = 0; i < prefix.size(); i++){
     /* First add the non-reversible edges */
+    maybe_add_spawn_happens_after(i);
     int last = compute_above_clock(i);
 
     if (last != -1) happens_after[last].push_back(i);
@@ -1075,23 +1120,32 @@ SymAddrSize RFSCTraceBuilder::get_addr(unsigned i) const {
   return symev_get_addr(prefix[i].sym);
 }
 
-SymData RFSCTraceBuilder::get_data(int i, const SymAddrSize &addr) const {
+static SymData get_data(const RFSCTraceBuilder::TraceOverlay &trace, int i,
+                        const SymAddrSize &addr) {
   if (i == -1) {
     SymData ret(addr, addr.size);
     memset(ret.get_block(), 0, addr.size);
     return ret;
   }
-  const SymEv &e = prefix[i].sym;
+  const SymEv &e = trace.prefix_at(i).sym();
   assert(e.has_data());
   assert(e.addr() == addr);
   return e.data();
 }
 
-bool RFSCTraceBuilder::rf_satisfies_cond(int r, int w) const {
-  assert(is_load(r));
-  const SymEv &re = prefix[r].sym;
+SymData RFSCTraceBuilder::get_data(int i, const SymAddrSize &addr) const {
+  return ::get_data(TraceOverlay(this, {}), i, addr);
+}
+
+bool RFSCTraceBuilder::rf_satisfies_cond(const TraceOverlay &trace, int r, int w) {
+  assert(::is_load(trace, r));
+  const SymEv &re = trace.prefix_at(r).sym();
   if (!re.has_cond()) return true;
-  return re.cond().satisfied_by(get_data(w, re.addr()));
+  return re.cond().satisfied_by(::get_data(trace, w, re.addr()));
+}
+
+bool RFSCTraceBuilder::rf_satisfies_cond(int r, int w) const {
+  return rf_satisfies_cond(TraceOverlay(this, {}), r, w);
 }
 
 static std::ptrdiff_t delete_from_back(gen::vector<int> &vec, int val) {
@@ -1166,9 +1220,14 @@ bool RFSCTraceBuilder::can_rf_by_vclocks
   return true;
 }
 
-bool RFSCTraceBuilder::can_swap_by_vclocks(int r, int w) const {
-  if (happens_before(prefix[r], prefix[w].above_clock)) return false;
+bool RFSCTraceBuilder::
+can_swap_by_vclocks(int r, const VClock<IPid> &w_above_clock) const {
+  if (happens_before(prefix[r], w_above_clock)) return false;
   return true;
+}
+
+bool RFSCTraceBuilder::can_swap_by_vclocks(int r, int w) const {
+  return can_swap_by_vclocks(r, prefix[w].above_clock);
 }
 
 bool RFSCTraceBuilder::can_swap_lock_by_vclocks(int f, int u, int s) const {
@@ -1219,31 +1278,30 @@ void RFSCTraceBuilder::compute_prefixes() {
   for (const auto &addr_awaits : blocking_awaits) {
     const SymAddrSize &addr = addr_awaits.first;
     for (const auto &pid_cond : addr_awaits.second) {
+      TraceOverlay ol(this, writes_by_address);
       IPid pid = pid_cond.first;
       const AwaitCond &cond = pid_cond.second;
-      /* It seems like the above clocks are not needed here, we should
-       * do this on TraceOverlay.
-       */
       unsigned i = prefix_idx;
       assert(i == prefix.size());
       auto iidx = threads[pid].last_event_index()+1;
       assert(prefix_idx == int(prefix.size()));
-      prefix.emplace_back(IID<IPid>(pid, iidx), 0, SymEv::LoadAwait(addr, cond));
-      ++prefix_idx;
-      threads[pid].event_indices.push_back(i); // Not needed?
-      compute_above_clock(i);
+      auto &e = ol.prefix_emplace_back(IID<IPid>(pid, iidx),
+                                       SymEv::LoadAwait(addr, cond));
+      maybe_add_spawn_happens_after(e);
 
-      std::shared_ptr<DecisionNode> &decision = prefix.back().decision_ptr;
+      std::shared_ptr<DecisionNode> decision;
 
       auto try_read_from = [&](int j) -> bool {
           assert(1);
-          if (!rf_satisfies_cond(i, j)) return false;
+          if (!rf_satisfies_cond(ol, i, j)) return false;
           const std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> &alt
             = prefix[i].event = unfold_find_unfolding_node(pid, iidx, j);
           if (!decision) {
             /* We're pulling it out of our ass! How can we avoid
                redundant checking? */
             decision = decision_tree.new_decision_node(work_item, alt);
+            e.decision_ptr = decision.get();
+            e.decision_depth = decision->depth;
           } else if (!decision->try_alloc_unf(alt)) {
             return false;
           }
@@ -1251,8 +1309,7 @@ void RFSCTraceBuilder::compute_prefixes() {
           if (conf.debug_print_on_reset)
             llvm::dbgs() << "Trying to satisfy deadlocked " << pretty_index(i)
                          << " reading from " << pretty_index(j);
-          TraceOverlay ol(this, writes_by_address, {i});
-          ol.prefix_mut(i).read_from = j;
+          e.read_from = j;
 
           Leaf solution = try_sat({i}, ol);
           if (solution.is_bottom()) return false;
@@ -1266,7 +1323,7 @@ void RFSCTraceBuilder::compute_prefixes() {
           return true;
         };
 
-      const VClock<IPid> &above = prefix[i].above_clock;
+      const VClock<IPid> above = compute_above_clock(e);
       bool found = false;
 
       found |= try_read_from(-1);
@@ -1283,10 +1340,7 @@ void RFSCTraceBuilder::compute_prefixes() {
         }
       }
 
-      /* Cleanup dummy event */
-      threads[pid].event_indices.pop_back();
-      --prefix_idx;
-      prefix.pop_back();
+      assert(prefix_idx == int(prefix.size()));
       if(found) return;
     }
   }
@@ -1356,6 +1410,7 @@ void RFSCTraceBuilder::compute_prefixes() {
         prefix.emplace_back(IID<IPid>(jp, jidx), 0, std::move(sym));
         prefix[j].event = alt; // Only for debug print
         threads[jp].event_indices.push_back(j); // Not needed?
+        maybe_add_spawn_happens_after(j);
         compute_above_clock(j);
 
         if (can_swap_by_vclocks(i, j)) {
@@ -1658,9 +1713,9 @@ RFSCTraceBuilder::try_sat
       }
       llvm::dbgs() << "]\n";
     }
-    std::vector<unsigned> order = map(*res, [this](IID<int> iid) {
-        return find_process_event(iid.get_pid(), iid.get_index());
-      });
+    std::vector<unsigned> order = map(*res, [&trace](IID<int> iid) {
+      return trace.find_process_event(iid.get_pid(), iid.get_index());
+    });
     return order_to_leaf(decision_depth, changed_events, trace,
                          std::move(order));
   }
@@ -1831,14 +1886,39 @@ long double RFSCTraceBuilder::estimate_trace_count(int idx) const{
   return count;
 }
 
+unsigned RFSCTraceBuilder::TraceOverlay::
+find_process_event(IPid pid, int index) const {
+  /* Since we don't have a prefix pop_back, we assume that any events
+   * that share indices with events in tb have the same iid */
+  for (auto it = prefix_overlay.lower_bound(tb->prefix.size());
+       it < prefix_overlay.end(); ++it) {
+    if (it->second.iid.get_pid() != pid) continue;
+    assert(it->second.iid.get_index() <= index
+           || it->second.iid.get_index() + it->second.size >= index);
+    if (it->second.iid.get_index() == index) return it->first;
+  }
+  unsigned res = tb->find_process_event(pid, index);
+  assert(prefix_at(res).iid().get_pid() == pid
+         && prefix_at(res).iid().get_index() == index);
+  return res;
+}
+
 RFSCTraceBuilder::TraceOverlay::TraceEvent::TraceEvent(const Event &e)
   : size(e.size), iid(e.iid), pinned(e.pinned),
     decision_depth(e.get_decision_depth()), decision_ptr(e.decision_ptr.get()),
-    sym(e.sym), read_from(e.read_from), underlying(&e) {}
+    sym(e.sym), read_from(e.read_from), happens_after(e.happens_after),
+    underlying(&e) {}
 
-const std::vector<unsigned> &RFSCTraceBuilder::TraceOverlay::
-TraceEvent::happens_after() const {
-  return underlying->happens_after;
+RFSCTraceBuilder::TraceOverlay::TraceEvent::
+TraceEvent(const IID<int> &iid, SymEv sym)
+  : size(1), iid(iid), pinned(false), decision_depth(-1), decision_ptr(nullptr),
+    sym(std::move(sym)) {}
+
+
+void RFSCTraceBuilder::TraceOverlay::TraceEvent::add_happens_after(unsigned event){
+  assert(event != ~0u);
+  if (happens_after.size() && happens_after.back() == event) return;
+  happens_after.push_back(event);
 }
 void RFSCTraceBuilder::TraceOverlay::TraceEvent::decision_swap(TraceEvent &e) {
   std::swap(decision_ptr, e.decision_ptr);
@@ -1877,7 +1957,7 @@ Option<int> RFSCTraceBuilder::TraceOverlay::TraceEventConstRef::read_from()
 }
 const std::vector<unsigned> &
 RFSCTraceBuilder::TraceOverlay::TraceEventConstRef::happens_after() const {
-  return overlay ? overlay->happens_after() : event->happens_after;
+  return overlay ? overlay->happens_after : event->happens_after;
 }
 
 RFSCTraceBuilder::TraceOverlay::
@@ -1888,7 +1968,7 @@ TraceOverlay(const RFSCTraceBuilder *tb, const writes_by_addr_ty &writes,
 RFSCTraceBuilder::TraceOverlay::
 TraceOverlay(const RFSCTraceBuilder *tb, writes_by_addr_ty &&writes,
              std::initializer_list<unsigned> preallocate)
-  : writes_by_addr(std::move(writes)), tb(tb) {
+  : writes_by_addr(std::move(writes)), _prefix_size(tb->prefix.size()), tb(tb) {
   prefix_overlay.reserve(preallocate.size());
   for (unsigned i : preallocate) {
     /* Assume that preallocate is sorted */
@@ -1897,11 +1977,12 @@ TraceOverlay(const RFSCTraceBuilder *tb, writes_by_addr_ty &&writes,
 }
 
 std::size_t RFSCTraceBuilder::TraceOverlay::prefix_size() const {
-  return tb->prefix.size();
+  return _prefix_size;
 }
 
 auto RFSCTraceBuilder::TraceOverlay::prefix_at(unsigned index) const
   -> TraceEventConstRef {
+  assert(index < prefix_size());
   auto it = prefix_overlay.find(index);
   if (it != prefix_overlay.end()) {
     return TraceEventConstRef(it->second);
@@ -1911,6 +1992,7 @@ auto RFSCTraceBuilder::TraceOverlay::prefix_at(unsigned index) const
 
 auto RFSCTraceBuilder::TraceOverlay::prefix_mut(unsigned index)
   -> TraceEvent& {
+  assert(index < prefix_size());
   auto ret = prefix_overlay.try_emplace(index, tb->prefix[index]);
   return ret.first->second;
 }
