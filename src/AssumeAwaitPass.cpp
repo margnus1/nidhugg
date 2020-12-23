@@ -224,6 +224,17 @@ bool AssumeAwaitPass::runOnFunction(llvm::Function &F) {
   return changed;
 }
 
+static llvm::FunctionType *getFunctionType(llvm::Type *fptr) {
+  if (llvm::FunctionType *fty = llvm::dyn_cast<llvm::FunctionType>(fptr)) {
+    return fty;
+  } else if (llvm::PointerType *pty = llvm::dyn_cast<llvm::PointerType>(fptr)) {
+    return getFunctionType(pty->getElementType());
+  } else {
+    llvm::dbgs() << fptr << "\n";
+    ::abort();
+  }
+}
+
 bool AssumeAwaitPass::tryRewriteAssume(llvm::Function *F, llvm::BasicBlock *BB, llvm::Instruction *I) const {
   llvm::CallInst *Call = llvm::dyn_cast<llvm::CallInst>(I);
   if (!Call || !is_assume(Call)) return false;
@@ -265,9 +276,7 @@ bool AssumeAwaitPass::tryRewriteAssume(llvm::Function *F, llvm::BasicBlock *BB, 
                    << ": Bad type " << Load->getType() << "\n";
       continue;
     }
-    assert(llvm::isa<llvm::FunctionType>(AwaitFunction->getType()));
-    llvm::FunctionType *AwaitFunctionType
-        = llvm::cast<llvm::FunctionType>(AwaitFunction->getType());
+    llvm::FunctionType *AwaitFunctionType = getFunctionType(AwaitFunction->getType());
     llvm::dbgs() << "Wow, replacing " << *Load << " and " << *Call << " in " << F->getName() << "\n";
     llvm::IntegerType *i8Ty = llvm::Type::getInt8Ty(F->getParent()->getContext());
     llvm::ConstantInt *COp = llvm::ConstantInt::get(i8Ty, op);
