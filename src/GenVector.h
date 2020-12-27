@@ -382,6 +382,12 @@ namespace gen {
     size_type limb_ix = last % limb_size;
     if (!root_is_cow_or_empty() && !limb_is_cow(limb)) {
       (*start[limb])[limb_ix].~T();
+      if (limb_ix == 0) {
+        /* Delete limb. Note that we are not amortising for the cost of
+         * this. A pathological workload may cause
+         * allocation/deallocation on every push & pop. */
+        operator delete(start[limb]);
+      }
     }
   }
   template<typename T, std::size_t limb_size>
