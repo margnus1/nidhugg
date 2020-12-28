@@ -254,7 +254,8 @@ bool AssumeAwaitPass::tryRewriteAssume(llvm::Function *F, llvm::BasicBlock *BB, 
     }
     llvm::Value *ArgVal = Cond->getOperand(1-load_index);
     llvm::CmpInst::Predicate pred = Cond->getPredicate();
-    if (bool(load_index) ^ negate) pred = llvm::CmpInst::getSwappedPredicate(pred);
+    if (load_index == 1) pred = llvm::CmpInst::getSwappedPredicate(pred);
+    if (negate) pred = llvm::CmpInst::getInversePredicate(pred);
     llvm::DominatorTree &DT = getAnalysis<llvm::LLVM_DOMINATOR_TREE_PASS>().getDomTree();
     if (!is_permissible_arg(DT, ArgVal, Load)) {
       llvm::dbgs() << "Not rewriting assume in " << F->getName() << ": RHS not permissible\n";
