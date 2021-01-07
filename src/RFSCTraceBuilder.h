@@ -236,19 +236,21 @@ protected:
 
   /* All currently blocking await statements */
   struct BlockedAwait {
-    BlockedAwait(AwaitCond cond) : cond(std::move(cond)) {}
+    BlockedAwait(int index, AwaitCond cond) : cond(std::move(cond)),
+                                              index(index) {}
     AwaitCond cond;
-    /* int index; // Maybe */
+    std::shared_ptr<DecisionNode> decision_ptr;
+    /* We don't use an IID as to not duplicate the IPid (used as key) */
+    int index;
     Option<unsigned> read_from;
+    bool pinned = false;
     // enum ReadFrom : int {
     //   RF_UNDEF = -2,
     //   RF_INIT = -1,
     // } rf = RF_UNDEF;
-    std::shared_ptr<DecisionNode> decision_ptr;
     int get_decision_depth() const {
       return decision_ptr ? decision_ptr->depth : -1;
     }
-    bool pinned = false;
   };
   typedef boost::container::flat_map
   <SymAddrSize, boost::container::flat_map<IPid, BlockedAwait>>
@@ -530,14 +532,17 @@ public:
       TraceEvent(const Event &event);
       TraceEvent(TraceEvent &&) = default;
       TraceEvent &operator=(TraceEvent&&) = default;
+      DecisionNode *decision_ptr;
+      std::vector<unsigned> happens_after;
+      SymEv sym;
       int size;
       IID<IPid> iid;
-      bool pinned;
       int decision_depth;
-      DecisionNode *decision_ptr;
-      SymEv sym;
       Option<int> read_from;
-      std::vector<unsigned> happens_after;
+      bool pinned;
+      /* Used to hide an event from being included in a consistency
+       * query, as if it had been deleted */
+      bool deleted = false;
 
       void add_happens_after(unsigned other);
       void decision_swap(TraceEvent &e);
@@ -558,6 +563,7 @@ public:
       const SymEv &sym() const;
       Option<int> read_from() const;
       const std::vector<unsigned> &happens_after() const;
+      bool deleted() const;
 
     private:
       /* Not the most memory compact, but it can be optimised later. */
@@ -636,7 +642,7 @@ protected:
                                 bool include_blocked_awaits = false,
                                 filtered_awaits_ty *awaits_out = nullptr) const;
 
-  enum class LastChangeKind : int {
+  enum LastChangeKind : int {
     PREFIX,
     BLOCKED,
   };
@@ -646,11 +652,11 @@ protected:
   };
   typedef boost::variant<unsigned, BlockedChange> last_change_ty;
 
-  Leaf try_sat(unsigned last_change,
+  Leaf try_sat(last_change_ty last_change,
                const TraceOverlay &trace);
   Leaf order_to_leaf(int decision, const TraceOverlay &trace,
                      const std::vector<unsigned> order,
-                     filtered_awaits_ty awaits) const;
+                     const filtered_awaits_ty &awaits) const;
   static void output_formula(SatSolver &sat, const TraceOverlay &trace,
                              const std::vector<bool> &);
   /* Estimate the total number of traces that have the same prefix as

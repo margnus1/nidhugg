@@ -23,8 +23,10 @@
 #include "Timing.h"
 #include "TraceUtil.h"
 
+#include <algorithm>
 #include <sstream>
 #include <stdexcept>
+#include <boost/variant/get.hpp>
 
 #define ANSIRed "\x1b[91m"
 #define ANSIRst "\x1b[m"
@@ -96,7 +98,8 @@ bool RFSCTraceBuilder::schedule(int *proc, int *aux, int *alt, bool *dryrun){
         assert(prefix_idx < 0 || (curev().sym.empty() ^ seen_effect)
                || (errors.size() && errors.back()->get_location()
                    == IID<CPid>(threads[curev().iid.get_pid()].cpid,
-                                curev().iid.get_index())));
+                                curev().iid.get_index()))
+               || !blocking_awaits.empty());
         replay = false;
       } else {
         /* We'll replay an event from planned_awaits */
@@ -105,7 +108,14 @@ bool RFSCTraceBuilder::schedule(int *proc, int *aux, int *alt, bool *dryrun){
         prefix.back().pinned = plan.pinned;
         prefix.back().set_decision(std::move(plan.decision_ptr));
         planned_awaits.pop_back();
+        seen_effect = false;
         ++prefix_idx;
+        IPid pid = curev().iid.get_pid();
+        *proc = pid;
+        *alt = curev().alt;
+        assert(threads[pid].available);
+        threads[pid].event_indices.push_back(prefix_idx);
+        return true;
       }
     } else {
       /* Go to the next event. */
@@ -195,11 +205,15 @@ void RFSCTraceBuilder::cancel_replay(){
   /* Find last decision, the one that caused this failure, and then
    * prune all later decisions. */
   int blame = -1; /* -1: All executions lead to this failure */
+  DecisionNode *blamee = nullptr;
   for (int i = 0; i <= prefix_idx; ++i) {
-    blame = std::max(blame, prefix[i].get_decision_depth());
+    if (prefix[i].get_decision_depth() > blame) {
+      blame = prefix[i].get_decision_depth();
+      blamee = prefix[i].decision_ptr.get();
+    }
   }
   if (blame != -1) {
-    prefix[blame].decision_ptr->prune_decisions();
+    blamee->prune_decisions();
   }
 }
 
@@ -496,19 +510,21 @@ bool RFSCTraceBuilder::load_await(const SymAddrSize &ml, AwaitCond cond) {
 
 bool RFSCTraceBuilder::load_await_fail(const SymAddrSize &ml, AwaitCond cond) {
   IPid current = curev().iid.get_pid();
+  int  index   = curev().iid.get_index();
   auto &ml_awaits = blocking_awaits[ml];
 
   if (conf.debug_print_on_reset)
     llvm::dbgs() << "Detecting blocking await by " << threads[current].cpid
                  << "\n";
 
-  assert(ml_awaits.count(current) == 0);
-  auto ret = ml_awaits.emplace(current, std::move(cond));
+  auto ret = ml_awaits.try_emplace(current, index, std::move(cond));
+  assert(ret.second);
+  BlockedAwait &aw = ret.first->second;
   if (replay) {
-    BlockedAwait &aw = ret.first->second;
     aw.pinned = curev().pinned;
     aw.decision_ptr = std::move(curev().decision_ptr);
   }
+  aw.index = curev().iid.get_index();
   return true;
 }
 
@@ -1321,12 +1337,16 @@ void RFSCTraceBuilder::compute_prefixes() {
   if (conf.debug_print_on_reset)
     llvm::dbgs() << "Computing prefixes\n";
 
-  auto pretty_index = [&] (int i) -> std::string {
+  auto pretty_index_t = [this] (const TraceOverlay &trace, int i) -> std::string {
     if (i==-1) return "init event";
-    return std::to_string(prefix[i].get_decision_depth()) + "("
-      + std::to_string(prefix[i].event->seqno) + "):"
-      + iid_string(i) + prefix[i].sym.to_string();
+    return std::to_string(trace.prefix_at(i).decision_depth()) // + "("
+      // + std::to_string(trace.prefix_at(i).unf_node()->seqno) + "):"
+      + iid_string(trace, i) + trace.prefix_at(i).sym().to_string();
   };
+  auto pretty_index = [&] (int i) -> std::string {
+    return pretty_index_t(TraceOverlay(this, {}), i);
+  };
+
 
   gen::map<SymAddr,gen::vector<int>> writes_by_address;
   std::map<SymAddr,std::vector<int>> cmpxhgfail_by_address;
@@ -1372,8 +1392,8 @@ void RFSCTraceBuilder::compute_prefixes() {
           if (!decision->try_alloc_unf(alt)) return false;
 
           if (conf.debug_print_on_reset)
-            llvm::dbgs() << "Trying to satisfy deadlocked " << pretty_index(i)
-                         << " reading from " << pretty_index(j);
+            llvm::dbgs() << "Trying to satisfy deadlocked " << pretty_index_t(ol, i)
+                         << " reading from " << pretty_index_t(ol, j);
           e.read_from = j;
 
           Leaf solution = try_sat(i, ol);
@@ -1579,18 +1599,34 @@ void RFSCTraceBuilder::compute_prefixes() {
           const std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> &read_from =
             j == -1 ? nullptr : prefix[j].event;
           if (!decision.try_alloc_unf(read_from)) return;
-          if (!can_rf_by_vclocks(i, original_read_from, j)
-              || !rf_satisfies_cond(i, j))
+          if (!can_rf_by_vclocks(i, original_read_from, j))
             return;
           if (conf.debug_print_on_reset)
             llvm::dbgs() << "Trying to make " << pretty_index(i)
                          << " read from " << pretty_index(j)
                          << " instead of " << pretty_index(original_read_from);
           TraceOverlay ol(this, writes_by_address, {unsigned(i)});
-          ol.prefix_mut(i).read_from = j;
-          recompute_cmpxhg_success(i, ol);
+          last_change_ty last_change;
+          if (!rf_satisfies_cond(i, j)) {
+            ol.prefix_mut(i).deleted = true;
+            const auto &addr = get_addr(i);
+            const IID<IPid> iid = prefix[i].iid;
+            auto ret =
+              ol.blocking_awaits[addr].try_emplace
+              (iid.get_pid(), iid.get_index(), prefix[i].sym.cond());
+            assert(ret.second);
+            ret.first->second.read_from = j;
+            ret.first->second.decision_ptr = prefix[i].decision_ptr;
+            assert(ret.first->second.get_decision_depth()
+                   == prefix[i].get_decision_depth());
+            last_change = BlockedChange{addr, iid.get_pid()};
+          } else {
+            ol.prefix_mut(i).read_from = j;
+            recompute_cmpxhg_success(i, ol);
+            last_change = i;
+          }
 
-          Leaf solution = try_sat(i, ol);
+          Leaf solution = try_sat(last_change, ol);
           if (!solution.is_bottom()) {
             decision_tree.construct_sibling(decision, read_from, std::move(solution));
             tasks_created++;
@@ -1742,29 +1778,44 @@ const SaturatedGraph &RFSCTraceBuilder::get_cached_graph
 
 Leaf
 RFSCTraceBuilder::try_sat
-(unsigned last_change, const TraceOverlay &trace){
+(last_change_ty last_change, const TraceOverlay &trace){
   Timing::Guard timing_guard(graph_context);
-  DecisionNode &decision = *trace.prefix_at(last_change).decision_ptr();
-  int decision_depth = decision.depth;
+  DecisionNode *decision;
+  if (last_change.which() == LastChangeKind::PREFIX) {
+    decision = trace.prefix_at(boost::get<unsigned>(last_change)).decision_ptr();
+  } else {
+    const BlockedChange &c = boost::get<BlockedChange>(last_change);
+    decision = trace.blocking_awaits.at(c.addr).at(c.pid).decision_ptr.get();
+  }
+  int decision_depth = decision->depth;
   filtered_awaits_ty awaits;
   std::vector<bool> keep = causal_past(decision_depth, trace, true, &awaits);
 
   /* Caching not implemented for blocked awaits */
   SaturatedGraph g; // (get_cached_graph(decision, trace).clone());
   for (unsigned i = 0; i < trace.prefix_size(); ++i) {
-    if (keep[i] && i != last_change && !g.has_event(trace.prefix_at(i).iid())) {
+    if (keep[i] && (last_change.which() != LastChangeKind::PREFIX
+                    || i != boost::get<unsigned>(last_change))
+        && !g.has_event(trace.prefix_at(i).iid())) {
       add_event_to_graph(g, trace, i);
     }
   }
-  add_event_to_graph(g, trace, last_change);
+  if (last_change.which() == LastChangeKind::PREFIX) {
+    add_event_to_graph(g, trace, boost::get<unsigned>(last_change));
+  }
   if (!awaits.empty()) {
     /* All awaits happen after all other events. */
     std::vector<IID<IPid>> happens_after;
     happens_after.reserve(threads.size());
     for (IPid p = 0; p < IPid(threads.size()); ++p) {
-      int index = threads[p].last_event_index();
-      if (index != 0) {
-        happens_after.emplace_back(p, index);
+      const auto &eis = threads[p].event_indices;
+      auto lb = std::lower_bound(eis.begin(), eis.end(), keep,
+                                 [](unsigned ix, const std::vector<bool> &keep) {
+                                   return keep[ix];
+                                 });
+      if (lb != eis.begin()) {
+        assert(keep[lb[-1]]);
+        happens_after.emplace_back(trace.prefix_at(lb[-1]).iid());
       }
     }
     for (const auto &await : awaits) {
@@ -1794,7 +1845,7 @@ RFSCTraceBuilder::try_sat
       }
       llvm::dbgs() << "]\n";
     }
-    res->resize(res->size() - awaits.size()); // Drop blocked events from order
+    assert(res->size() == std::size_t(std::count(keep.begin(), keep.end(), true)));
     std::vector<unsigned> order = map(*res, [&trace](IID<int> iid) {
       return trace.find_process_event(iid.get_pid(), iid.get_index());
     });
@@ -1844,7 +1895,7 @@ RFSCTraceBuilder::try_sat
 
 Leaf RFSCTraceBuilder::order_to_leaf
 (int decision, const TraceOverlay &trace, const std::vector<unsigned> order,
- filtered_awaits_ty awaits) const {
+ const filtered_awaits_ty &awaits) const {
   std::vector<Branch> new_prefix;
   new_prefix.reserve(order.size()+awaits.size());
   for (unsigned i : order) {
@@ -1878,6 +1929,7 @@ static void causal_past_1(std::vector<bool> &acc, unsigned i,
   if (acc[i] == true) return;
   acc[i] = true;
   const auto &e = trace.prefix_at(i);
+  assert(!e.deleted());
   Option<int> rf = e.read_from();
   if (rf && *rf != -1) {
     causal_past_1(acc, *rf, trace);
@@ -1895,12 +1947,14 @@ RFSCTraceBuilder::causal_past(int decision, const TraceOverlay &trace,
             bool include_blocked_awaits, filtered_awaits_ty *awaits_out) const {
   std::vector<bool> acc(trace.prefix_size());
   for (unsigned i = 0; i < trace.prefix_size(); ++i) {
-    assert(!((trace.prefix_at(i).decision_depth() != -1)
-             && trace.prefix_at(i).pinned()));
-    assert(::is_load(trace, i) == ((trace.prefix_at(i).decision_depth() != -1)
-                                   || trace.prefix_at(i).pinned()));
-    if (trace.prefix_at(i).decision_depth() != -1
-        && trace.prefix_at(i).decision_depth() <= decision) {
+    const TraceOverlay::TraceEventConstRef e = trace.prefix_at(i);
+    assert(!((e.decision_depth() != -1)
+             && e.pinned()));
+    assert(::is_load(trace, i) == ((e.decision_depth() != -1)
+                                   || e.pinned()));
+    if (e.decision_depth() != -1
+        && e.decision_depth() <= decision
+        && !e.deleted()) {
       causal_past_1(acc, i, trace);
     }
   }
@@ -1911,9 +1965,12 @@ RFSCTraceBuilder::causal_past(int decision, const TraceOverlay &trace,
         const BlockedAwait &await = pid_await.second;
         assert(await.pinned || await.decision_ptr);
         if (!await.pinned && await.get_decision_depth() <= decision) {
-          if (threads[p].event_indices.size() > 0) {
-            unsigned i = trace.find_process_event(p, threads[p].last_event_index());
+          if (await.index > 1) {
+            unsigned i = trace.find_process_event(p, await.index-1);
             causal_past_1(acc, i, trace);
+          }
+          if (await.read_from) {
+            causal_past_1(acc, *await.read_from, trace);
           }
           if (awaits_out) {
             awaits_out->emplace_back(addr_awaits.first, pid_await);
@@ -2003,28 +2060,30 @@ find_process_event(IPid pid, int index) const {
    * that share indices with events in tb have the same iid */
   for (auto it = prefix_overlay.lower_bound(tb->prefix.size());
        it < prefix_overlay.end(); ++it) {
-    if (it->second.iid.get_pid() != pid) continue;
-    assert(it->second.iid.get_index() <= index
-           || it->second.iid.get_index() + it->second.size >= index);
-    if (it->second.iid.get_index() == index) return it->first;
+    const auto &e = it->second;
+    if (e.iid.get_pid() != pid) continue;
+    if (e.iid.get_index() <= index
+        && e.iid.get_index() + e.size > index) {
+      return it->first;
+    }
   }
   unsigned res = tb->find_process_event(pid, index);
   assert(prefix_at(res).iid().get_pid() == pid
-         && prefix_at(res).iid().get_index() == index);
+         && prefix_at(res).iid().get_index() <= index
+         && prefix_at(res).iid().get_index() + prefix_at(res).size() > index);
   return res;
 }
 
 RFSCTraceBuilder::TraceOverlay::TraceEvent::TraceEvent(const Event &e)
-  : size(e.size), iid(e.iid), pinned(e.pinned),
-    decision_depth(e.get_decision_depth()), decision_ptr(e.decision_ptr.get()),
-    sym(e.sym), read_from(e.read_from), happens_after(e.happens_after),
-    underlying(&e) {}
+  : decision_ptr(e.decision_ptr.get()), happens_after(e.happens_after),
+    sym(e.sym), size(e.size), iid(e.iid),
+    decision_depth(e.get_decision_depth()), read_from(e.read_from),
+    pinned(e.pinned), underlying(&e) {}
 
 RFSCTraceBuilder::TraceOverlay::TraceEvent::
 TraceEvent(const IID<int> &iid, SymEv sym)
-  : size(1), iid(iid), pinned(false), decision_depth(-1), decision_ptr(nullptr),
-    sym(std::move(sym)) {}
-
+  : decision_ptr(nullptr), sym(std::move(sym)), size(1), iid(iid),
+    decision_depth(-1), pinned(false) {}
 
 void RFSCTraceBuilder::TraceOverlay::TraceEvent::add_happens_after(unsigned event){
   assert(event != ~0u);
@@ -2069,6 +2128,9 @@ Option<int> RFSCTraceBuilder::TraceOverlay::TraceEventConstRef::read_from()
 const std::vector<unsigned> &
 RFSCTraceBuilder::TraceOverlay::TraceEventConstRef::happens_after() const {
   return overlay ? overlay->happens_after : event->happens_after;
+}
+bool RFSCTraceBuilder::TraceOverlay::TraceEventConstRef::deleted() const {
+  return overlay && overlay->deleted;
 }
 
 RFSCTraceBuilder::TraceOverlay::
