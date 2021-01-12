@@ -77,8 +77,9 @@ bool RFSCTraceBuilder::schedule(int *proc, int *aux, int *alt, bool *dryrun){
   *aux = -1; /* No auxilliary threads in SC */
   if(replay){
     /* Are we done with the current Event? */
-    if (0 <= prefix_idx && threads[curev().iid.get_pid()].last_event_index() <
-        curev().iid.get_index() + curev().size - 1) {
+    if (0 <= prefix_idx
+        && threads[curev().iid.get_pid()].last_event_index()
+           < curev().iid.get_index() + curev().size - 1) {
       /* Continue executing the current Event */
       IPid pid = curev().iid.get_pid();
       *proc = pid;
@@ -92,37 +93,30 @@ bool RFSCTraceBuilder::schedule(int *proc, int *aux, int *alt, bool *dryrun){
       }
       threads[pid].event_indices.push_back(prefix_idx);
       return true;
-    } else if(prefix_idx + 1 == int(prefix.size())) {
-      if (planned_awaits.empty()) {
-        /* We are done replaying. Continue below... */
-        assert(prefix_idx < 0 || (curev().sym.empty() ^ seen_effect)
-               || (errors.size() && errors.back()->get_location()
-                   == IID<CPid>(threads[curev().iid.get_pid()].cpid,
-                                curev().iid.get_index()))
-               || !blocking_awaits.empty());
-        replay = false;
-      } else {
+    } else if(prefix_idx + 1 == int(prefix.size())
+              && planned_awaits.empty()) {
+      /* We are done replaying. Continue below... */
+      assert(prefix_idx < 0 || (curev().sym.empty() ^ seen_effect)
+             || (errors.size() && errors.back()->get_location()
+                 == IID<CPid>(threads[curev().iid.get_pid()].cpid,
+                              curev().iid.get_index()))
+             || !blocking_awaits.empty());
+      replay = false;
+    } else {
+      if (prefix_idx + 1 == int(prefix.size())) {
         /* We'll replay an event from planned_awaits */
         PlannedAwait &plan = planned_awaits.back();
         prefix.emplace_back(plan.iid);
         prefix.back().pinned = plan.pinned;
         prefix.back().set_decision(std::move(plan.decision_ptr));
         planned_awaits.pop_back();
-        seen_effect = false;
-        ++prefix_idx;
-        IPid pid = curev().iid.get_pid();
-        *proc = pid;
-        *alt = curev().alt;
-        assert(threads[pid].available);
-        threads[pid].event_indices.push_back(prefix_idx);
-        return true;
+      } else {
+        /* Go to the next event. */
+        assert(prefix_idx < 0 || (curev().sym.empty() ^ seen_effect)
+               || (errors.size() && errors.back()->get_location()
+                   == IID<CPid>(threads[curev().iid.get_pid()].cpid,
+                                curev().iid.get_index())));
       }
-    } else {
-      /* Go to the next event. */
-      assert(prefix_idx < 0 || (curev().sym.empty() ^ seen_effect)
-             || (errors.size() && errors.back()->get_location()
-                 == IID<CPid>(threads[curev().iid.get_pid()].cpid,
-                              curev().iid.get_index())));
       seen_effect = false;
       ++prefix_idx;
       IPid pid = curev().iid.get_pid();
@@ -258,7 +252,7 @@ bool RFSCTraceBuilder::reset(){
   }
 
   Leaf l = std::move(work_item->leaf);
-  auto unf = std::move(work_item->unfold_node);
+  const auto &unf = work_item->unfold_node;
 
   assert(!l.is_bottom());
   if (conf.debug_print_on_reset && !l.prefix.empty())
@@ -352,7 +346,15 @@ std::string RFSCTraceBuilder::iid_string(const Event &event) const{
 }
 
 std::string RFSCTraceBuilder::iid_string(IID<IPid> iid) const{
-  return iid_string(find_process_event(iid.get_pid(), iid.get_index()));
+  if (Option<unsigned> event
+      = try_find_process_event(iid.get_pid(), iid.get_index())) {
+    return iid_string(*event);
+  } else {
+    /* May be a blocked event */
+    std::stringstream ss;
+    ss << "(" << threads[iid.get_pid()].cpid << "," << iid.get_index() << ")";
+    return ss.str();
+  }
 }
 
 std::string RFSCTraceBuilder::iid_string(const TraceOverlay &trace,
@@ -1033,6 +1035,14 @@ void RFSCTraceBuilder::compute_unfolding() {
         deepest_node = decision_tree.new_decision_node(std::move(deepest_node), decision);
         prefix[i].set_decision(deepest_node);
       }
+    } else {
+#ifndef NDEBUG
+      if (is_load(i)) {
+        const std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> &decision
+          = is_lock_type(i) ? prefix[i].event : prefix[i].event->read_from;
+        assert(prefix[i].pinned || prefix[i].decision_ptr->unfold_node == decision.get());
+      }
+#endif
     }
   }
   for (auto &addr_awaits : blocking_awaits) {
@@ -1046,8 +1056,14 @@ void RFSCTraceBuilder::compute_unfolding() {
         const std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> &decision
           = aw.read_from == 0 ? nullptr : prefix[aw.read_from].event;
         if (aw.decision_ptr) {
-          if (aw.decision_ptr->unfold_node != decision) {
-            llvm::dbgs() << "Not implemented: Decision-tree jump";
+          if (aw.decision_ptr->unfold_node != decision.get()) {
+            llvm::dbgs() << "Not implemented: Decision-tree jump\n";
+            llvm::dbgs() << iid_string({pid_cond.first, aw.index})
+                         << " is reading from " << (aw.read_from ? iid_string(*aw.read_from) : "init");
+            if(decision) llvm::dbgs() << "(" << decision->seqno << ")";
+            llvm::dbgs() << " instead of " << (aw.decision_ptr->unfold_node
+                                               ? std::to_string(aw.decision_ptr->unfold_node->seqno)
+                                               : "init") << "\n";
             abort();
           }
         } else {
@@ -1379,17 +1395,18 @@ void RFSCTraceBuilder::compute_prefixes() {
       maybe_add_spawn_happens_after(e);
       ol.blocking_awaits[addr].erase(pid);
 
-      std::shared_ptr<DecisionNode> decision = pid_cond.second.decision_ptr;
+      const std::shared_ptr<DecisionNode> &decision = pid_cond.second.decision_ptr;
       e.decision_ptr = decision.get();
       e.decision_depth = e.decision_ptr->depth;
 
-      auto try_read_from = [&](int j) -> bool {
+      auto try_read_from = [&](int j) {
           assert(1);
-          if (!rf_satisfies_cond(ol, i, j)) return false;
-          const std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> &alt
-            = prefix[i].event = unfold_find_unfolding_node(pid, iidx, j);
+          if (!rf_satisfies_cond(ol, i, j)) return;
+          std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> alt
+            = unfold_find_unfolding_node(pid, iidx, j);
           assert(decision);
-          if (!decision->try_alloc_unf(alt)) return false;
+          /* XXX: Inefficiency: we could transfer reference ownership into here */
+          if (!decision->try_alloc_unf(alt)) return;
 
           if (conf.debug_print_on_reset)
             llvm::dbgs() << "Trying to satisfy deadlocked " << pretty_index_t(ol, i)
@@ -1397,22 +1414,20 @@ void RFSCTraceBuilder::compute_prefixes() {
           e.read_from = j;
 
           Leaf solution = try_sat(i, ol);
-          if (solution.is_bottom()) return false;
+          if (solution.is_bottom()) return;
 
           /* We can satisfy this await. Commit to the decision node we
            * allocated above and immediately start exploring this new
            * trace. */
-          decision_tree.construct_sibling(decision, std::move(alt),
+          decision_tree.construct_sibling(*decision, alt.get(),
                                           std::move(solution));
           tasks_created++;
-          return true;
         };
 
       const VClock<IPid> above = compute_above_clock(e);
-      bool found = false;
 
-      found |= try_read_from(-1);
-      for (unsigned p = 0; !found && p < threads.size(); ++p) {
+      try_read_from(-1);
+      for (unsigned p = 0; p < threads.size(); ++p) {
         const std::vector<unsigned> &writes
           = writes_by_process_and_address[p][addr.addr];
         auto start = std::upper_bound(writes.begin(), writes.end(), above[p],
@@ -1421,12 +1436,11 @@ void RFSCTraceBuilder::compute_prefixes() {
                                       });
         if (start != writes.begin()) --start;
         for (auto it = start; it != writes.end(); ++it) {
-          if ((found |= try_read_from(*it))) break;
+          try_read_from(*it);
         }
       }
 
       assert(prefix_idx == int(prefix.size()));
-      if(found) return;
     }
   }
 
@@ -1452,7 +1466,7 @@ void RFSCTraceBuilder::compute_prefixes() {
 
         Leaf solution = try_sat(j, ol);
         if (!solution.is_bottom()) {
-          decision_tree.construct_sibling(decision, std::move(alt),
+          decision_tree.construct_sibling(decision, alt.get(),
                                           std::move(solution));
           tasks_created++;
         }
@@ -1476,7 +1490,7 @@ void RFSCTraceBuilder::compute_prefixes() {
 
         Leaf solution = try_sat(j, ol);
         if (!solution.is_bottom()) {
-          decision_tree.construct_sibling(decision, std::move(alt),
+          decision_tree.construct_sibling(decision, alt.get(),
                                           std::move(solution));
           tasks_created++;
         }
@@ -1511,7 +1525,7 @@ void RFSCTraceBuilder::compute_prefixes() {
 
           Leaf solution = try_sat(j, ol);
           if (!solution.is_bottom()) {
-            decision_tree.construct_sibling(decision, std::move(alt),
+            decision_tree.construct_sibling(decision, alt.get(),
                                             std::move(solution));
             tasks_created++;
           }
@@ -1583,7 +1597,7 @@ void RFSCTraceBuilder::compute_prefixes() {
 
         Leaf solution = try_sat(i, ol);
         if (!solution.is_bottom()) {
-          decision_tree.construct_sibling(decision, std::move(read_from),
+          decision_tree.construct_sibling(decision, read_from.get(),
                                           std::move(solution));
           tasks_created++;
         }
@@ -1628,7 +1642,7 @@ void RFSCTraceBuilder::compute_prefixes() {
 
           Leaf solution = try_sat(last_change, ol);
           if (!solution.is_bottom()) {
-            decision_tree.construct_sibling(decision, read_from, std::move(solution));
+            decision_tree.construct_sibling(decision, read_from.get(), std::move(solution));
             tasks_created++;
           }
         }

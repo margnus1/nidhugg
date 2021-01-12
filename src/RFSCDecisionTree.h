@@ -67,27 +67,29 @@ public:
 struct DecisionNode {
 public:
   /* Constructor for root node. */
-  DecisionNode() : depth(-1), leaf(std::vector<Branch>()), parent(nullptr),
-                   pruned_subtree(false), cache_initialised(true) {}
+  DecisionNode() : depth(-1), unfold_node(nullptr), leaf(std::vector<Branch>()),
+                   parent(nullptr), pruned_subtree(false),
+                   cache_initialised(true) {}
   /* Constructor for new nodes during compute_unfolding. */
-  DecisionNode(std::shared_ptr<DecisionNode> decision)
-    : depth(decision->depth+1), pruned_subtree(false),
-      cache_initialised(false) {
-    parent = std::move(decision);
-  }
+  DecisionNode(std::shared_ptr<DecisionNode> decision,
+               RFSCUnfoldingTree::UnfoldingNode *unf)
+    : depth(decision->depth+1), unfold_node(std::move(unf)),
+      parent(std::move(decision)), pruned_subtree(false),
+      cache_initialised(false) {}
   /* Constructor for new siblings during compute_prefixes. */
   DecisionNode(std::shared_ptr<DecisionNode> decision,
-               std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> unf, Leaf l)
-    : depth(decision->depth+1), unfold_node(std::move(unf)), leaf(l),
-      pruned_subtree(false), cache_initialised(false) {
-    parent = std::move(decision);
-  }
+               RFSCUnfoldingTree::UnfoldingNode *unf, Leaf l)
+    : depth(decision->depth+1), unfold_node(unf), leaf(l),
+      parent(std::move(decision)), pruned_subtree(false),
+      cache_initialised(false) {}
 
   /* The depth in the tree. */
   int depth;
 
   /* The UnfoldingNode of a new sibling. */
-  std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> unfold_node;
+  /* There is an owning reference from parent, therefore we don't need
+   * to own it here, too */
+  RFSCUnfoldingTree::UnfoldingNode *unfold_node;
 
   /* The Leaf of a new sibling. */
   Leaf leaf;
@@ -101,7 +103,7 @@ public:
 
   /* Constructs a sibling and inserts in in the sibling-set. */
   std::shared_ptr<DecisionNode> make_sibling
-  (std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> unf, Leaf l) const;
+  (RFSCUnfoldingTree::UnfoldingNode *unf, Leaf l) const;
 
   /* Returns a given nodes SaturatedGraph, or reuses an ancestors graph if none exist. */
   const SaturatedGraph &get_saturated_graph(std::function<void(SaturatedGraph&)>);
@@ -240,7 +242,7 @@ public:
   /* Constructs a sibling Decision node and add it to work queue. */
   void construct_sibling
   (const DecisionNode &decision,
-   std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> unf, Leaf l);
+   RFSCUnfoldingTree::UnfoldingNode *unf, Leaf l);
 
   /* Given a DecisionNode whose depth >= to wanted, returns a parent with the wanted depth. */
   static const std::shared_ptr<DecisionNode> &find_ancestor
