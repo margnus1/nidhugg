@@ -24,8 +24,10 @@
 
 #ifdef TRACE
 #  define IFTRACE(X) X
+#  define IFFTRACE(...) __VA_ARGS__
 #else
 #  define IFTRACE(X) ((void)0)
+#  define IFFTRACE(...)
 #endif
 
 static Timing::Context saturate_timing("saturate");
@@ -49,6 +51,7 @@ void SaturatedGraph::add_event(Pid pid, ExtID extid, EventKind kind,
                                const std::vector<ExtID> &orig_in) {
   Timing::Guard timing_guard(add_event_timing);
   ID id = events.size();
+  assert(extid_to_id.find(extid) == nullptr);
   extid_to_id.mut(extid) = id; // insert
   bool is_load = kind == LOAD || kind == RMW;
   bool is_store = kind == STORE || kind == RMW;
@@ -61,7 +64,7 @@ void SaturatedGraph::add_event(Pid pid, ExtID extid, EventKind kind,
       if (events_by_p.size()) {
           assert(events_by_p.size() != 0);
           po_predecessor = events_by_p.back();
-          IFTRACE(std::cerr << "Adding PO(" << pid << ") between " << *po_predecessor << " and " << id << "\n");
+          IFTRACE(std::cerr << "Adding PO(" << pid << ") between " << etos(*po_predecessor) << " and " << extid << "\n");
           index = events.at(*po_predecessor).iid.get_index() + 1;
           outs.mut(*po_predecessor).push_back(id);
       }
@@ -77,11 +80,11 @@ void SaturatedGraph::add_event(Pid pid, ExtID extid, EventKind kind,
   edge_vector &in = ins.emplace_back();
   for (const ExtID &ei : orig_in) {
     ID i = extid_to_id(ei);
-    IFTRACE(std::cerr << "Adding edge between " << i << " and " << id << "\n");
+    IFTRACE(std::cerr << "Adding edge between " << etos(i) << " and " << extid << "\n");
     in.push_back(i);
   }
   if (read_from) {
-    IFTRACE(std::cerr << "Adding read-from between " << *read_from << " and " << id << "\n");
+    IFTRACE(std::cerr << "Adding read-from between " << etos(*read_from) << " and " << extid << "\n");
     events.mut(*read_from).readers.push_back(id);
   } else if (is_load) {
     /* We do loads first so that in the case of RMW we do not find
@@ -89,10 +92,10 @@ void SaturatedGraph::add_event(Pid pid, ExtID extid, EventKind kind,
      */
     gen::for_each
       (writes_by_address[addr],
-       [this,id,&out](std::pair<const Pid,ID> p) {
+       [this,id,&out IFFTRACE(,&extid)](std::pair<const Pid,ID> p) {
          ID w = p.second;
          /* TODO: Optimise; only add the first write of each process */
-         IFTRACE(std::cerr << "Adding from-read between " << id << " and " << w << "\n");
+         IFTRACE(std::cerr << "Adding from-read between " << extid << " and " << etos(w) << "\n");
          out.push_back(w);
          ins.mut(w).push_back(id);
          wq_add(w);
@@ -108,7 +111,7 @@ void SaturatedGraph::add_event(Pid pid, ExtID extid, EventKind kind,
        * readers of init.
        */
       for (ID r : reads_from_init[addr]) {
-        IFTRACE(std::cerr << "Adding from-read between " << r << " and " << id << "\n");
+        IFTRACE(std::cerr << "Adding from-read between " << etos(r) << " and " << extid << "\n");
         in.push_back(r);
         outs.mut(r).push_back(id);
       }
@@ -119,7 +122,7 @@ void SaturatedGraph::add_event(Pid pid, ExtID extid, EventKind kind,
   }
 
   for (ID after : in) {
-    IFTRACE(std::cerr << "Adding out edge for " << after << " and " << id << "\n");
+    IFTRACE(std::cerr << "Adding out edge for " << etos(after) << " and " << extid << "\n");
     outs.mut(after).push_back(id);
   }
 
@@ -159,7 +162,7 @@ bool SaturatedGraph::saturate() {
         return false;
       }
       if (vc == old_vc) {
-        IFTRACE(std::cerr << id << " unchanged\n");
+        IFTRACE(std::cerr << etos(id) << " unchanged\n");
         continue;
       }
       /* Saturation logic */
@@ -194,7 +197,7 @@ bool SaturatedGraph::saturate() {
               if (r == id) continue; /* RMW we're reading from */
               /* from-read */
               assert(events[r].is_load && events[r].addr == e.addr);
-              IFTRACE(std::cerr << "Adding from-read from " << r << " to " << id << "\n");
+              IFTRACE(std::cerr << "Adding from-read from " << etos(r) << " to " << etos(id) << "\n");
               in.push_back(r);
               outs.mut(r).push_back(id);
               new_in = true;
@@ -212,7 +215,7 @@ bool SaturatedGraph::saturate() {
             unsigned my_read_from = *e.read_from;
             if (pe_id != my_read_from) {
               /* coherence order */
-              IFTRACE(std::cerr << "Adding coherence order from " << pe_id << " to " << my_read_from << "\n");
+              IFTRACE(std::cerr << "Adding coherence order from " << etos(pe_id) << " to " << etos(my_read_from) << "\n");
               new_edges.emplace_back(pe_id, my_read_from);
             }
           }
@@ -220,7 +223,7 @@ bool SaturatedGraph::saturate() {
       }
 
       add_successors_to_wq(id, e);
-      IFTRACE(std::cerr << "Updating " << id << ": " << vc << "\n");
+      IFTRACE(std::cerr << "Updating " << etos(id) << ": " << vc << "\n");
       vclocks.mut(id) = std::move(vc);
     }
     if (new_in) wq_add_first(id);
@@ -446,7 +449,7 @@ void SaturatedGraph::reverse_saturate() {
             << ".." << events.size() << "\n");
     struct care care = reverse_care_set();
     IFTRACE(std::cerr << "Care set: ");
-    IFTRACE(for (ID id : care.vec) std::cerr << id << " ");
+    IFTRACE(for (ID id : care.vec) std::cerr << etos(id) << " ");
     IFTRACE(std::cerr << "\n");
     if (care.vec.empty()) goto done;
 
@@ -486,7 +489,7 @@ void SaturatedGraph::reverse_saturate() {
 #endif
           for (unsigned r : new_out) {
             if (r == pe_id) continue; /* RMW */
-            IFTRACE(std::cerr << "Adding missed from-read from " << r << " to " << pe_id << "\n");
+            IFTRACE(std::cerr << "Adding missed from-read from " << etos(r) << " to " << etos(pe_id) << "\n");
             /* Optimisation opportunity */
             add_edge_internal(r, pe_id);
           }
@@ -542,3 +545,9 @@ auto SaturatedGraph::top() const -> VC {
   }
   return top;
 }
+
+#ifdef TRACE
+std::string SaturatedGraph::etos(ID id) const {
+  return events[id].ext_id.to_string();
+}
+#endif

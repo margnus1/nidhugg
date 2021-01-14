@@ -150,6 +150,9 @@ private:
   void check_graph_consistency() const {};
 #endif
 
+  // For tracing
+  std::string etos(ID id) const;
+
   std::deque<ID> wq_queue;
   std::vector<bool> wq_set;
   void wq_add(ID id);
