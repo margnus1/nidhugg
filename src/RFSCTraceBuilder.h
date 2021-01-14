@@ -288,7 +288,7 @@ protected:
     Event(const IID<IPid> &iid, int alt = 0, SymEv sym = {})
       : alt(0), size(1), pinned(false),
         iid(iid), origin_iid(iid), md(0), clock(), may_conflict(false),
-        sym(std::move(sym)), sleep_branch_trace_count(0), decision_depth(-1) {};
+        sym(std::move(sym)), sleep_branch_trace_count(0) {};
     /* Some instructions may execute in several alternative ways
      * nondeterministically. (E.g. malloc may succeed or fail
      * nondeterministically if Configuration::malloy_may_fail is set.)
@@ -344,21 +344,15 @@ protected:
     std::shared_ptr<DecisionNode> decision_ptr;
 
     int get_decision_depth() const {
-      assert(decision_depth == (decision_ptr ? decision_ptr->depth : -1));
-      return decision_depth;
+      return decision_ptr ? decision_ptr->depth : -1;
     };
     void set_decision(std::shared_ptr<DecisionNode> decision) {
       decision_ptr = std::move(decision);
-      decision_depth = decision_ptr ? decision_ptr->depth : -1;
     };
     void set_branch_decision(int decision, const std::shared_ptr<DecisionNode> &work_item) {
-      decision_depth = decision;
       decision_ptr = depth_to_decision(decision, work_item);
+      assert(get_decision_depth() == decision);
     };
-
-  private:
-    /* The hierarchical order of events. */
-    int decision_depth;
   };
 
   /* The fixed prefix of events in the current execution. This may be
@@ -401,6 +395,10 @@ protected:
 
   /* The latest value passed to this->metadata(). */
   const llvm::MDNode *last_md;
+
+  /* The index of the planned await with the shallowest decision depth
+   * that was (unexpectedly) unblocked, if any. */
+  Option<unsigned> prefix_first_unblock_jump;
 
   IPid ipid(int proc, int aux) const {
     assert(aux == -1);
@@ -537,7 +535,6 @@ public:
       SymEv sym;
       int size;
       IID<IPid> iid;
-      int decision_depth;
       Option<int> read_from;
       bool pinned;
       /* Used to hide an event from being included in a consistency
@@ -546,6 +543,7 @@ public:
 
       void add_happens_after(unsigned other);
       void decision_swap(TraceEvent &e);
+      int get_decision_depth() const;
 
     private:
       /* Used to provide happens_after() */
@@ -607,6 +605,7 @@ public:
     }
 
     Option<unsigned> po_predecessor(unsigned i) const;
+    Option<unsigned> try_find_process_event(IPid pid, int index) const;
     unsigned find_process_event(IPid pid, int index) const;
 
     writes_by_addr_ty writes_by_addr;

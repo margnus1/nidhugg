@@ -48,6 +48,10 @@ public:
     return *this;
   }
 
+  void reset() {
+    if (std::exchange(has_value, false)) value.~Value();
+  }
+
   operator bool() const noexcept { return has_value; }
   Value const& operator *() const { assert(has_value); return value; }
   Value& operator *() { assert(has_value); return value; }

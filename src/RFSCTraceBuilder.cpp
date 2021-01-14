@@ -286,7 +286,10 @@ bool RFSCTraceBuilder::reset(){
 #ifndef NDEBUG
   for (int d = 0; d < work_item->depth; ++d) {
     assert(std::any_of(new_prefix.begin(), new_prefix.end(),
-                       [&](const Event &e) { return e.get_decision_depth() == d; }));
+                       [&](const Event &e) { return e.get_decision_depth() == d; })
+           + std::any_of(planned_awaits.begin(), planned_awaits.end(),
+                         [d](const PlannedAwait &a) { return a.decision_ptr->depth == d; })
+           == 1);
   }
 #endif
 
@@ -307,6 +310,7 @@ bool RFSCTraceBuilder::reset(){
   last_md = 0;
   tasks_created = 0;
   reset_cond_branch_log();
+  prefix_first_unblock_jump.reset();
 
   return true;
 }
@@ -359,7 +363,15 @@ std::string RFSCTraceBuilder::iid_string(IID<IPid> iid) const{
 
 std::string RFSCTraceBuilder::iid_string(const TraceOverlay &trace,
                                          IID<IPid> iid) const {
-  return iid_string(trace, trace.find_process_event(iid.get_pid(), iid.get_index()));
+  if (Option<unsigned> event
+      = trace.try_find_process_event(iid.get_pid(), iid.get_index())) {
+    return iid_string(trace, *event);
+  } else {
+    /* May be a blocked event */
+    std::stringstream ss;
+    ss << "(" << threads[iid.get_pid()].cpid << "," << iid.get_index() << ")";
+    return ss.str();
+  }
 }
 
 std::string RFSCTraceBuilder::iid_string(const TraceOverlay &trace,
@@ -493,9 +505,14 @@ bool RFSCTraceBuilder::load_await(const SymAddrSize &ml, AwaitCond cond) {
   if (ml_await != blocking_awaits.end()) {
     IPid current = curev().iid.get_pid();
     auto it = ml_await->second.find(current);
+    assert(!curev().decision_ptr);
     if (it->second.decision_ptr) {
-      invalid_input_error("Not implemented: decision-tree jumping");
-      return false;
+      std::swap(curev().decision_ptr, it->second.decision_ptr);
+      if (!prefix_first_unblock_jump
+          || curev().decision_ptr->depth
+          < prefix[*prefix_first_unblock_jump].decision_ptr->depth) {
+        prefix_first_unblock_jump = prefix_idx;
+      }
     }
     ml_await->second.erase(it);
     /* Delete the memory location if it became empty */
@@ -997,14 +1014,12 @@ void RFSCTraceBuilder::compute_vclocks(){
 }
 
 void RFSCTraceBuilder::compute_unfolding() {
-  auto deepest_node = work_item;
-
   Timing::Guard timing_guard(unfolding_context);
+
+  /* Compute unfolding events for prefix */
   for (unsigned i = 0; i < prefix.size(); ++i) {
-    auto last_decision = prefix[i].decision_ptr;
-    if (last_decision && last_decision->depth > deepest_node->depth) {
-      deepest_node = last_decision;
-    }
+    const auto &last_decision = prefix[i].decision_ptr;
+    assert(!last_decision || work_item->depth >= last_decision->depth);
 
     const std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> null_ptr;
     const std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> *parent;
@@ -1027,52 +1042,112 @@ void RFSCTraceBuilder::compute_unfolding() {
 
     prefix[i].event = unfolding_tree.find_unfolding_node
       (threads[p].cpid, *parent, *read_from);
-
-    if (int(i) >= replay_point) {
-      if (is_load(i)) {
-        const std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> &decision
-        = is_lock_type(i) ? prefix[i].event : prefix[i].event->read_from;
-        deepest_node = decision_tree.new_decision_node(std::move(deepest_node), decision);
-        prefix[i].set_decision(deepest_node);
-      }
-    } else {
-#ifndef NDEBUG
-      if (is_load(i)) {
-        const std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> &decision
-          = is_lock_type(i) ? prefix[i].event : prefix[i].event->read_from;
-        assert(prefix[i].pinned || prefix[i].decision_ptr->unfold_node == decision.get());
-      }
-#endif
-    }
   }
+
+  auto deepest_node = work_item;
+
+  /* Look for a decision-tree jump */
+  Option<int> jump_depth = prefix_first_unblock_jump.map
+    ([this](unsigned ix) { return prefix[ix].decision_ptr->depth; });
+  bool first_jump_is_await = false;
+  std::pair<IPid,BlockedAwait> *await_jump = nullptr;
   for (auto &addr_awaits : blocking_awaits) {
     const SymAddrSize &addr = addr_awaits.first;
     for (auto &pid_cond : addr_awaits.second) {
       BlockedAwait &aw = pid_cond.second;
-      assert(!(aw.pinned && aw.decision_ptr)); // Case not handled
-      if (!aw.pinned) {
-        /* XXX: Unnecessary insertion */
-        aw.read_from = mem[addr.addr].last_update;
-        const std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> &decision
-          = aw.read_from == 0 ? nullptr : prefix[aw.read_from].event;
-        if (aw.decision_ptr) {
-          if (aw.decision_ptr->unfold_node != decision.get()) {
-            llvm::dbgs() << "Not implemented: Decision-tree jump\n";
-            llvm::dbgs() << iid_string({pid_cond.first, aw.index})
-                         << " is reading from " << (aw.read_from ? iid_string(*aw.read_from) : "init");
-            if(decision) llvm::dbgs() << "(" << decision->seqno << ")";
-            llvm::dbgs() << " instead of " << (aw.decision_ptr->unfold_node
-                                               ? std::to_string(aw.decision_ptr->unfold_node->seqno)
-                                               : "init") << "\n";
-            abort();
-          }
-        } else {
-          deepest_node = decision_tree.new_decision_node(std::move(deepest_node), decision);
-          aw.decision_ptr = deepest_node;
-        }
+      assert(!aw.pinned);
+      /* XXX: Unnecessary insertion */
+      aw.read_from = mem[addr.addr].last_update;
+      const std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> &decision
+        = !aw.read_from ? nullptr : prefix[*aw.read_from].event;
+      if (aw.decision_ptr && aw.decision_ptr->unfold_node != decision.get()
+          && (!jump_depth || aw.decision_ptr->depth < *jump_depth)) {
+        jump_depth = aw.decision_ptr->depth;
+        await_jump = &pid_cond;
+        first_jump_is_await = true;
       }
     }
   }
+
+  /* If we're doing a jump, go to the right place in the decision tree */
+  std::vector<bool> jump_keep;
+  if (jump_depth) {
+    std::shared_ptr<DecisionNode> *node;
+    if (conf.debug_print_on_reset)
+      llvm::dbgs() << "Handling decision jump at depth " << *jump_depth << "\n";
+    Option<unsigned> read_from;
+    if (first_jump_is_await) {
+      node = &await_jump->second.decision_ptr;
+      read_from = await_jump->second.read_from;
+      if (conf.debug_print_on_reset)
+        llvm::dbgs() << "Blocked await "
+                     << iid_string({await_jump->first, await_jump->second.index})
+                     << " now reading "
+                     << (read_from ? iid_string(*read_from) : "init") << "\n";
+    } else {
+      unsigned ix = *prefix_first_unblock_jump;
+      node = &prefix[ix].decision_ptr;
+      read_from = prefix[ix].read_from.map([](int i) { return unsigned(i); });
+      if (conf.debug_print_on_reset)
+        llvm::dbgs() << "Await " << iid_string(ix) << " unblocked reading "
+                     << (read_from ? iid_string(*read_from) : "init") << "\n";
+    }
+    const std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> &decision
+      = !read_from ? nullptr : prefix[*read_from].event;
+    if (!(*node)->try_alloc_unf(decision)) {
+      llvm::dbgs() << "Not implemented: Redundant exploration";
+      ::abort();
+    } else {
+      /* Ugly, but we can't use construct_sibling() since it adds the
+       * new node to the scheduler queue (!) */
+      *node = (*node)->make_sibling(decision.get(), Leaf());
+    }
+    jump_keep = causal_past((*node)->depth, TraceOverlay(this, {}), true);
+    deepest_node = *node;
+  }
+
+  /* Assign decision pointers to prefix */
+  for (unsigned i = 0; i < prefix.size(); ++i) {
+    if (jump_depth && jump_keep[i]) {
+      if (prefix[i].decision_ptr && prefix[i].get_decision_depth() <= *jump_depth) {
+        /* Keep it */
+        assert(prefix[i].decision_ptr->unfold_node == prefix[i].event->read_from.get());
+      } else {
+        prefix[i].set_decision(nullptr);
+        /* For consistency, we should not set non-decision-nodes as pinned */
+        if (is_load(i)) prefix[i].pinned = true;
+      }
+    } else if (jump_depth || int(i) >= replay_point) {
+      if (is_load(i)) {
+        assert(jump_depth || !prefix[i].pinned);
+        prefix[i].pinned = false;
+        const std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> &decision
+          = is_lock_type(i) ? prefix[i].event : prefix[i].event->read_from;
+        deepest_node = decision_tree.new_decision_node(std::move(deepest_node), decision);
+        prefix[i].set_decision(deepest_node);
+      } else {
+        assert(!prefix[i].pinned);
+        assert(!prefix[i].decision_ptr);
+      }
+    }
+  }
+
+  /* Assign decision pointers to blocking awaits */
+  for (auto &addr_awaits : blocking_awaits) {
+    for (auto &pid_cond : addr_awaits.second) {
+      BlockedAwait &aw = pid_cond.second;
+      assert(!aw.pinned);
+      const std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> &decision
+        = !aw.read_from ? nullptr : prefix[*aw.read_from].event;
+      if (aw.decision_ptr && (!jump_depth || aw.decision_ptr->depth <= *jump_depth)) {
+        assert(aw.decision_ptr->unfold_node == decision.get());
+      } else {
+        deepest_node = decision_tree.new_decision_node(std::move(deepest_node), decision);
+        aw.decision_ptr = deepest_node;
+      }
+    }
+  }
+
   work_item = std::move(deepest_node);
 }
 
@@ -1397,13 +1472,12 @@ void RFSCTraceBuilder::compute_prefixes() {
 
       const std::shared_ptr<DecisionNode> &decision = pid_cond.second.decision_ptr;
       e.decision_ptr = decision.get();
-      e.decision_depth = e.decision_ptr->depth;
 
       auto try_read_from = [&](int j) {
           assert(1);
           if (!rf_satisfies_cond(ol, i, j)) return;
-          std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> alt
-            = unfold_find_unfolding_node(pid, iidx, j);
+          const std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> &alt
+            = j == -1 ? nullptr : prefix[j].event;
           assert(decision);
           /* XXX: Inefficiency: we could transfer reference ownership into here */
           if (!decision->try_alloc_unf(alt)) return;
@@ -1836,7 +1910,7 @@ RFSCTraceBuilder::try_sat
       IPid pid = await.pid_await.first;
       Option<IID<IPid>> read_from = await.pid_await.second.read_from.map
         ([&](unsigned ix) { return trace.prefix_at(ix).iid(); });
-      IID<IPid> iid(pid, threads[pid].last_event_index()+1);
+      IID<IPid> iid(pid, await.pid_await.second.index);
       g.add_event(pid, iid, SaturatedGraph::LOAD, await.addr.addr, read_from,
                   happens_after);
     }
@@ -1846,8 +1920,15 @@ RFSCTraceBuilder::try_sat
       llvm::dbgs() << ": Saturation yielded cycle\n";
     return Leaf();
   }
-  std::vector<IID<int>> current_exec
-    = map(trace, [](const TraceOverlay::TraceEventConstRef &e) { return e.iid(); });
+  std::vector<IID<int>> current_exec;
+  current_exec.reserve(trace.prefix_size());
+  for (unsigned i = 0; i < trace.prefix_size(); ++i) {
+    if (keep[i]) {
+      const TraceOverlay::TraceEventConstRef e = trace.prefix_at(i);
+      assert(!e.deleted());
+      current_exec.push_back(e.iid());
+    }
+  }
   /* We need to preserve g */
   if (Option<std::vector<IID<int>>> res
       = try_generate_prefix(std::move(g), std::move(current_exec))) {
@@ -1856,6 +1937,12 @@ RFSCTraceBuilder::try_sat
       llvm::dbgs() << "[";
       for (IID<int> iid : *res) {
         llvm::dbgs() << iid_string(trace, iid) << ",";
+      }
+      if (!awaits.empty()) {
+        llvm::dbgs() << " ";
+        for (const auto &aw : awaits) {
+          llvm::dbgs() << iid_string(trace, IID<int>(aw.pid_await.first, aw.pid_await.second.index)) << ",";
+        }
       }
       llvm::dbgs() << "]\n";
     }
@@ -1964,8 +2051,9 @@ RFSCTraceBuilder::causal_past(int decision, const TraceOverlay &trace,
     const TraceOverlay::TraceEventConstRef e = trace.prefix_at(i);
     assert(!((e.decision_depth() != -1)
              && e.pinned()));
-    assert(::is_load(trace, i) == ((e.decision_depth() != -1)
-                                   || e.pinned()));
+    /* Does not hold when called from compute_unfolding() */
+    // assert(::is_load(trace, i) == ((e.decision_depth() != -1)
+    //                                || e.pinned()));
     if (e.decision_depth() != -1
         && e.decision_depth() <= decision
         && !e.deleted()) {
@@ -2088,16 +2176,35 @@ find_process_event(IPid pid, int index) const {
   return res;
 }
 
+Option<unsigned> RFSCTraceBuilder::TraceOverlay::
+try_find_process_event(IPid pid, int index) const {
+  /* Since we don't have a prefix pop_back, we assume that any events
+   * that share indices with events in tb have the same iid */
+  for (auto it = prefix_overlay.lower_bound(tb->prefix.size());
+       it < prefix_overlay.end(); ++it) {
+    const auto &e = it->second;
+    if (e.iid.get_pid() != pid) continue;
+    if (e.iid.get_index() <= index
+        && e.iid.get_index() + e.size > index) {
+      return it->first;
+    }
+  }
+  Option<unsigned> res = tb->try_find_process_event(pid, index);
+  assert(!res || prefix_at(*res).iid().get_pid() == pid
+         && prefix_at(*res).iid().get_index() <= index
+         && prefix_at(*res).iid().get_index() + prefix_at(*res).size() > index);
+  return res;
+}
+
 RFSCTraceBuilder::TraceOverlay::TraceEvent::TraceEvent(const Event &e)
   : decision_ptr(e.decision_ptr.get()), happens_after(e.happens_after),
-    sym(e.sym), size(e.size), iid(e.iid),
-    decision_depth(e.get_decision_depth()), read_from(e.read_from),
+    sym(e.sym), size(e.size), iid(e.iid), read_from(e.read_from),
     pinned(e.pinned), underlying(&e) {}
 
 RFSCTraceBuilder::TraceOverlay::TraceEvent::
 TraceEvent(const IID<int> &iid, SymEv sym)
   : decision_ptr(nullptr), sym(std::move(sym)), size(1), iid(iid),
-    decision_depth(-1), pinned(false) {}
+    pinned(false) {}
 
 void RFSCTraceBuilder::TraceOverlay::TraceEvent::add_happens_after(unsigned event){
   assert(event != ~0u);
@@ -2106,7 +2213,9 @@ void RFSCTraceBuilder::TraceOverlay::TraceEvent::add_happens_after(unsigned even
 }
 void RFSCTraceBuilder::TraceOverlay::TraceEvent::decision_swap(TraceEvent &e) {
   std::swap(decision_ptr, e.decision_ptr);
-  std::swap(decision_depth, e.decision_depth);
+}
+int RFSCTraceBuilder::TraceOverlay::TraceEvent::get_decision_depth() const {
+  return decision_ptr ? decision_ptr->depth : -1;
 }
 
 RFSCTraceBuilder::TraceOverlay::TraceEventConstRef::
@@ -2126,7 +2235,7 @@ bool RFSCTraceBuilder::TraceOverlay::TraceEventConstRef::pinned() const {
   return overlay ? overlay->pinned : event->pinned;
 }
 int RFSCTraceBuilder::TraceOverlay::TraceEventConstRef::decision_depth() const {
-  return overlay ? overlay->decision_depth : event->get_decision_depth();
+  return overlay ? overlay->get_decision_depth() : event->get_decision_depth();
 }
 DecisionNode *RFSCTraceBuilder::TraceOverlay::TraceEventConstRef::decision_ptr()
   const {
