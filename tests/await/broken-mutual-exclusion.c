@@ -1,7 +1,7 @@
 /*
  * A too simplistic mutual exclusion protocol.
  * Safety: Safe
- * Traces: 1
+ * Traces: 1 + 2 blocked
  */
 #include <pthread.h>
 #include <stdatomic.h>
