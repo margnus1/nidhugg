@@ -349,6 +349,12 @@ std::string RFSCTraceBuilder::iid_string(const Event &event) const{
   return ss.str();
 }
 
+std::string RFSCTraceBuilder::iid_string(const std::pair<IPid,BlockedAwait> &pa) const{
+  std::stringstream ss;
+  ss << "(" << threads[pa.first].cpid << "," << pa.second.index << ")";
+  return ss.str();
+}
+
 std::string RFSCTraceBuilder::iid_string(IID<IPid> iid) const{
   if (Option<unsigned> event
       = try_find_process_event(iid.get_pid(), iid.get_index())) {
@@ -399,7 +405,6 @@ void RFSCTraceBuilder::debug_print() const {
   int unf_offs = 0;
   int rf_offs = 0;
   int clock_offs = 0;
-  std::vector<std::string> lines(prefix.size(), "");
 
   for(unsigned i = 0; i < prefix.size(); ++i){
     IPid ipid = prefix[i].iid.get_pid();
@@ -412,7 +417,19 @@ void RFSCTraceBuilder::debug_print() const {
                        int(std::to_string(*prefix[i].read_from).size())
                        : 1);
     clock_offs = std::max(clock_offs,int(prefix[i].clock.to_string().size()));
-    lines[i] = prefix[i].sym.to_string();
+  }
+
+  for (auto &addr_awaits : blocking_awaits) {
+    for (auto &pid_await : addr_awaits.second) {
+      IPid ipid = pid_await.first;
+      const BlockedAwait &aw = pid_await.second;
+      idx_offs = std::max(idx_offs,1);
+      iid_offs = std::max(iid_offs,2*ipid+int(iid_string(pid_await).size()));
+      dec_offs = std::max(dec_offs,int(std::to_string(aw.get_decision_depth()).size()));
+      unf_offs = std::max(unf_offs,1);
+      rf_offs = std::max(rf_offs, int(std::to_string(aw.read_from).size()));
+      clock_offs = std::max(clock_offs,1);
+    }
   }
 
   for(unsigned i = 0; i < prefix.size(); ++i){
@@ -425,10 +442,21 @@ void RFSCTraceBuilder::debug_print() const {
                  << " " << lpad(std::to_string(prefix[i].event->seqno),unf_offs)
                  << " " << lpad(prefix[i].read_from ? std::to_string(*prefix[i].read_from) : "-",rf_offs)
                  << " " << rpad(prefix[i].clock.to_string(),clock_offs)
-                 << " " << lines[i] << "\n";
+                 << " " << prefix[i].sym.to_string() << "\n";
   }
-  for (unsigned i = prefix.size(); i < lines.size(); ++i){
-    llvm::dbgs() << std::string(2+iid_offs + 1+clock_offs, ' ') << lines[i] << "\n";
+  for (auto &addr_awaits : blocking_awaits) {
+    for (auto &pid_await : addr_awaits.second) {
+      IPid ipid = pid_await.first;
+      const BlockedAwait &aw = pid_await.second;
+      llvm::dbgs() << " " << lpad("b",idx_offs)
+                 << rpad("",1+ipid*2)
+                 << rpad(iid_string(pid_await),iid_offs-ipid*2)
+                 << " " << lpad(std::to_string(aw.get_decision_depth()),dec_offs)
+                 << " " << lpad("-",unf_offs)
+                 << " " << lpad(std::to_string(aw.read_from),rf_offs)
+                 << " " << rpad("-",clock_offs)
+                 << " Blocked" << SymEv::LoadAwait(addr_awaits.first, aw.cond).to_string() << "\n";
+    }
   }
   if(errors.size()){
     llvm::dbgs() << "Errors:\n";
@@ -1942,7 +1970,7 @@ RFSCTraceBuilder::try_sat
       if (!awaits.empty()) {
         llvm::dbgs() << " ";
         for (const auto &aw : awaits) {
-          llvm::dbgs() << iid_string(trace, IID<int>(aw.pid_await.first, aw.pid_await.second.index)) << ",";
+          llvm::dbgs() << iid_string(aw.pid_await) << ",";
         }
       }
       llvm::dbgs() << "]\n";

@@ -437,6 +437,8 @@ protected:
   std::string iid_string(std::size_t pos) const;
   /* Pretty-prints the iid of event. */
   std::string iid_string(const Event &event) const;
+  /* Pretty-prints the iid a blocked event. */
+  std::string iid_string(const std::pair<IPid,BlockedAwait> &pid_await) const;
   /* Pretty-prints the iid of trace.prefix_at(pos). */
   std::string iid_string(const TraceOverlay &trace, std::size_t pos) const;
   /* Pretty-prints an iid in a trace. */
