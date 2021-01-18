@@ -242,7 +242,7 @@ protected:
     std::shared_ptr<DecisionNode> decision_ptr;
     /* We don't use an IID as to not duplicate the IPid (used as key) */
     int index;
-    Option<unsigned> read_from;
+    int read_from = -1;
     bool pinned = false;
     // enum ReadFrom : int {
     //   RF_UNDEF = -2,

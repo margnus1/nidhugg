@@ -1059,7 +1059,7 @@ void RFSCTraceBuilder::compute_unfolding() {
       /* XXX: Unnecessary insertion */
       aw.read_from = mem[addr.addr].last_update;
       const std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> &decision
-        = !aw.read_from ? nullptr : prefix[*aw.read_from].event;
+        = aw.read_from == -1 ? nullptr : prefix[aw.read_from].event;
       if (aw.decision_ptr && aw.decision_ptr->unfold_node != decision.get()
           && (!jump_depth || aw.decision_ptr->depth < *jump_depth)) {
         jump_depth = aw.decision_ptr->depth;
@@ -1075,25 +1075,25 @@ void RFSCTraceBuilder::compute_unfolding() {
     std::shared_ptr<DecisionNode> *node;
     if (conf.debug_print_on_reset)
       llvm::dbgs() << "Handling decision jump at depth " << *jump_depth << "\n";
-    Option<unsigned> read_from;
+    int read_from;
     if (first_jump_is_await) {
       node = &await_jump->second.decision_ptr;
       read_from = await_jump->second.read_from;
       if (conf.debug_print_on_reset)
         llvm::dbgs() << "Blocked await "
-                     << iid_string({await_jump->first, await_jump->second.index})
+                     << iid_string(*await_jump)
                      << " now reading "
-                     << (read_from ? iid_string(*read_from) : "init") << "\n";
+                     << (read_from != -1 ? iid_string(read_from) : "init") << "\n";
     } else {
       unsigned ix = *prefix_first_unblock_jump;
       node = &prefix[ix].decision_ptr;
-      read_from = prefix[ix].read_from.map([](int i) { return unsigned(i); });
+      read_from = *prefix[ix].read_from;
       if (conf.debug_print_on_reset)
         llvm::dbgs() << "Await " << iid_string(ix) << " unblocked reading "
-                     << (read_from ? iid_string(*read_from) : "init") << "\n";
+                     << (read_from != -1 ? iid_string(read_from) : "init") << "\n";
     }
     const std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> &decision
-      = !read_from ? nullptr : prefix[*read_from].event;
+      = read_from == -1 ? nullptr : prefix[read_from].event;
     if (!(*node)->try_alloc_unf(decision)) {
       llvm::dbgs() << "Not implemented: Redundant exploration";
       ::abort();
@@ -1138,7 +1138,7 @@ void RFSCTraceBuilder::compute_unfolding() {
       BlockedAwait &aw = pid_cond.second;
       assert(!aw.pinned);
       const std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> &decision
-        = !aw.read_from ? nullptr : prefix[*aw.read_from].event;
+        = aw.read_from == -1 ? nullptr : prefix[aw.read_from].event;
       if (aw.decision_ptr && (!jump_depth || aw.decision_ptr->depth <= *jump_depth)) {
         assert(aw.decision_ptr->unfold_node == decision.get());
       } else {
@@ -1908,8 +1908,9 @@ RFSCTraceBuilder::try_sat
     }
     for (const auto &await : awaits) {
       IPid pid = await.pid_await.first;
-      Option<IID<IPid>> read_from = await.pid_await.second.read_from.map
-        ([&](unsigned ix) { return trace.prefix_at(ix).iid(); });
+      Option<IID<IPid>> read_from;
+      if (await.pid_await.second.read_from != -1)
+        read_from = trace.prefix_at(await.pid_await.second.read_from).iid();
       IID<IPid> iid(pid, await.pid_await.second.index);
       g.add_event(pid, iid, SaturatedGraph::LOAD, await.addr.addr, read_from,
                   happens_after);
@@ -2071,8 +2072,8 @@ RFSCTraceBuilder::causal_past(int decision, const TraceOverlay &trace,
             unsigned i = trace.find_process_event(p, await.index-1);
             causal_past_1(acc, i, trace);
           }
-          if (await.read_from) {
-            causal_past_1(acc, *await.read_from, trace);
+          if (await.read_from != -1) {
+            causal_past_1(acc, await.read_from, trace);
           }
           if (awaits_out) {
             awaits_out->emplace_back(addr_awaits.first, pid_await);
