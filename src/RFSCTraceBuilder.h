@@ -400,6 +400,10 @@ protected:
    * that was (unexpectedly) unblocked, if any. */
   Option<unsigned> prefix_first_unblock_jump;
 
+  /* Indicates that the current execution was redundant with some
+   * other one. Only possible with await-statements */
+  bool was_redundant = false;
+
   IPid ipid(int proc, int aux) const {
     assert(aux == -1);
     assert(proc < int(threads.size()));
@@ -482,8 +486,10 @@ protected:
    * should it be executed */
   bool check_happens_before_blocked(IID<IPid> event, IPid blocked,
                                     const SymAddr &blocked_on_addr) const;
-  /* Assigns unfolding events to all executed steps. */
-  void compute_unfolding();
+  /* Assigns unfolding events to all executed steps. Returns false if
+   * the current execution is found to be redundant with some other,
+   * otherwise true; */
+  bool compute_unfolding();
 
   // TODO: Refactor RFSCUnfoldingTree and and deprecate these methods.
   // Workaround due to require access to parent while not having a root-node

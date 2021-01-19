@@ -219,7 +219,7 @@ void RFSCTraceBuilder::metadata(const llvm::MDNode *md){
 }
 
 bool RFSCTraceBuilder::sleepset_is_empty() const{
-  return true;
+  return !was_redundant;
 }
 
 Trace *RFSCTraceBuilder::get_trace() const{
@@ -311,6 +311,7 @@ bool RFSCTraceBuilder::reset(){
   tasks_created = 0;
   reset_cond_branch_log();
   prefix_first_unblock_jump.reset();
+  was_redundant = false;
 
   return true;
 }
@@ -398,7 +399,9 @@ std::string RFSCTraceBuilder::iid_string(const TraceOverlay &trace,
 }
 
 void RFSCTraceBuilder::debug_print() const {
-  llvm::dbgs() << "RFSCTraceBuilder (debug print, replay until " << replay_point << "):\n";
+  llvm::dbgs() << "RFSCTraceBuilder (debug print, replay until " << replay_point;
+  if (was_redundant) llvm::dbgs() << ", redundant";
+  llvm::dbgs() << "):\n";
   int idx_offs = 0;
   int iid_offs = 0;
   int dec_offs = 0;
@@ -1041,7 +1044,7 @@ void RFSCTraceBuilder::compute_vclocks(){
   }
 }
 
-void RFSCTraceBuilder::compute_unfolding() {
+bool RFSCTraceBuilder::compute_unfolding() {
   Timing::Guard timing_guard(unfolding_context);
 
   /* Compute unfolding events for prefix */
@@ -1123,8 +1126,8 @@ void RFSCTraceBuilder::compute_unfolding() {
     const std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> &decision
       = read_from == -1 ? nullptr : prefix[read_from].event;
     if (!(*node)->try_alloc_unf(decision)) {
-      llvm::dbgs() << "Not implemented: Redundant exploration";
-      ::abort();
+      llvm::dbgs() << "This is redundant, bailing out\n";
+      return false;
     } else {
       /* Ugly, but we can't use construct_sibling() since it adds the
        * new node to the scheduler queue (!) */
@@ -1177,6 +1180,7 @@ void RFSCTraceBuilder::compute_unfolding() {
   }
 
   work_item = std::move(deepest_node);
+  return true;
 }
 
 std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> RFSCTraceBuilder::
@@ -1444,13 +1448,15 @@ void RFSCTraceBuilder::compute_prefixes() {
   Timing::Guard analysis_timing_guard(analysis_context);
   compute_vclocks();
 
-  compute_unfolding();
+  was_redundant |= !compute_unfolding();
 
   if(conf.debug_print_on_reset){
     llvm::dbgs() << " === RFSCTraceBuilder state ===\n";
     debug_print();
     llvm::dbgs() << " ==============================\n";
   }
+
+  if (was_redundant) return;
 
   Timing::Guard neighbours_timing_guard(neighbours_context);
   if (conf.debug_print_on_reset)
