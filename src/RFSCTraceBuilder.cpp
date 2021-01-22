@@ -1929,7 +1929,7 @@ RFSCTraceBuilder::try_sat
   }
   int decision_depth = decision->depth;
   filtered_awaits_ty awaits;
-  std::vector<bool> keep = causal_past(decision_depth, trace, true, &awaits);
+  std::vector<bool> keep = prefix_keep(decision_depth, trace, awaits);
 
   /* Caching not implemented for blocked awaits */
   SaturatedGraph g; // (get_cached_graph(decision, trace).clone());
@@ -2006,6 +2006,7 @@ RFSCTraceBuilder::try_sat
     return order_to_leaf(decision_depth, trace, std::move(order), awaits);
   }
 
+  assert(awaits.empty());
   std::unique_ptr<SatSolver> sat = conf.get_sat_solver();
   {
     Timing::Guard timing_guard(sat_context);
@@ -2059,6 +2060,7 @@ Leaf RFSCTraceBuilder::order_to_leaf
       new_pinned = true;
       new_decision = -1;
     }
+    assert(new_decision != decision || trace.prefix_at(i).size() == 1);
     new_prefix.emplace_back(trace.prefix_at(i).iid().get_pid(),
                             trace.prefix_at(i).size(),
                             new_decision,
@@ -2098,7 +2100,8 @@ static void causal_past_1(std::vector<bool> &acc, unsigned i,
 
 std::vector<bool>
 RFSCTraceBuilder::causal_past(int decision, const TraceOverlay &trace,
-            bool include_blocked_awaits, filtered_awaits_ty *awaits_out) const {
+                              bool include_blocked_awaits,
+                              filtered_awaits_ty *awaits_out) const {
   std::vector<bool> acc(trace.prefix_size());
   for (unsigned i = 0; i < trace.prefix_size(); ++i) {
     const TraceOverlay::TraceEventConstRef e = trace.prefix_at(i);
@@ -2135,6 +2138,74 @@ RFSCTraceBuilder::causal_past(int decision, const TraceOverlay &trace,
     }
   } else {
     assert(!awaits_out);
+  }
+  return acc;
+}
+
+static bool prefix_keep_1(std::vector<bool> &acc, std::vector<bool> &del,
+                          unsigned i, int decision,
+                          const RFSCTraceBuilder::TraceOverlay &trace) {
+  if (del[i]) return false;
+  const auto &e = trace.prefix_at(i);
+  if (acc[i]) return e.decision_depth() != decision;
+  if (e.deleted() || e.decision_depth() > decision) {
+    del[i] = true;
+    return false;
+  } else {
+    assert(!e.deleted());
+  }
+  if (Option<unsigned> pred = trace.po_predecessor(i)) {
+    if (!prefix_keep_1(acc, del, *pred, decision, trace)) {
+      del[i] = true;
+      return false;
+    }
+  }
+  Option<int> rf = e.read_from();
+  if (rf && *rf != -1) {
+    if (!prefix_keep_1(acc, del, *rf, decision, trace)) {
+      del[i] = true;
+      return false;
+    }
+  }
+  for (unsigned j : e.happens_after()) {
+    if (!prefix_keep_1(acc, del, j, decision, trace)) {
+      del[i] = true;
+      return false;
+    }
+  }
+  acc[i] = true;
+  if (e.decision_depth() != decision) {
+    if (Option<unsigned> succ = trace.try_find_process_event
+        (e.iid().get_pid(), e.iid().get_index() + e.size())) {
+      assert(trace.po_predecessor(*succ) && *trace.po_predecessor(*succ) == i);
+      const auto &se = trace.prefix_at(*succ);
+      if (!se.deleted() && !is_load(trace, *succ)) {
+        assert(se.decision_depth() == -1);
+        prefix_keep_1(acc, del, *succ, decision, trace);
+      }
+    }
+  }
+  /* Intentionally return false when depth == decision; this is how we
+   * exclude successors of that event. */
+  return e.decision_depth() != decision;
+}
+
+std::vector<bool>
+RFSCTraceBuilder::prefix_keep(int decision, const TraceOverlay &trace,
+                              filtered_awaits_ty &awaits_out) const {
+  std::vector<bool> acc = causal_past(decision, trace, true, &awaits_out);
+  std::vector<bool> del(trace.prefix_size());
+
+  for (unsigned i = 0; i < trace.prefix_size(); ++i) {
+    const TraceOverlay::TraceEventConstRef e = trace.prefix_at(i);
+    assert(!((e.decision_depth() != -1)
+             && e.pinned()));
+    /* Does not hold when called from compute_unfolding() */
+    assert(::is_load(trace, i) == ((e.decision_depth() != -1)
+                                   || e.pinned()));
+    if (!e.deleted()) {
+      prefix_keep_1(acc, del, i, decision, trace);
+    }
   }
   return acc;
 }
@@ -2243,6 +2314,9 @@ try_find_process_event(IPid pid, int index) const {
     }
   }
   Option<unsigned> res = tb->try_find_process_event(pid, index);
+  /* The event might have been shortened in the overlay */
+  if (res && prefix_at(*res).iid().get_index() + prefix_at(*res).size() <= index)
+    return nullptr;
   assert(!res || prefix_at(*res).iid().get_pid() == pid
          && prefix_at(*res).iid().get_index() <= index
          && prefix_at(*res).iid().get_index() + prefix_at(*res).size() > index);

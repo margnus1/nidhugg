@@ -648,6 +648,11 @@ protected:
   std::vector<bool> causal_past(int decision, const TraceOverlay &trace,
                                 bool include_blocked_awaits = false,
                                 filtered_awaits_ty *awaits_out = nullptr) const;
+  /* Instead of just including everything that causally happens-before
+   * something with <= decision; include everything that neither is nor
+   * happens-after something with > decision */
+  std::vector<bool> prefix_keep(int decision, const TraceOverlay &trace,
+                                filtered_awaits_ty &awaits_out) const;
 
   enum LastChangeKind : int {
     PREFIX,
