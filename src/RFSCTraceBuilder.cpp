@@ -92,6 +92,7 @@ bool RFSCTraceBuilder::schedule(int *proc, int *aux, int *alt, bool *dryrun){
         abort();
       }
       threads[pid].event_indices.push_back(prefix_idx);
+      assert(threads[pid].event_indices.size() < ulong(curev().iid.get_index() + curev().size));
       return true;
     } else if(prefix_idx + 1 == int(prefix.size())
               && planned_awaits.empty()) {
@@ -124,6 +125,7 @@ bool RFSCTraceBuilder::schedule(int *proc, int *aux, int *alt, bool *dryrun){
       *alt = curev().alt;
       assert(threads[pid].available);
       threads[pid].event_indices.push_back(prefix_idx);
+      assert(threads[pid].event_indices.size() == ulong(curev().iid.get_index()));
       return true;
     }
   }
@@ -141,16 +143,30 @@ bool RFSCTraceBuilder::schedule(int *proc, int *aux, int *alt, bool *dryrun){
      !prefix[prefix.size()-1].may_conflict){
     assert(curev().sym.empty()); /* Would need to be copied */
     assert(curev().sym.empty()); /* Can't happen */
+    int old_size = curev().size;
+    assert(old_size >= 1);
+    assert(replay_point <= prefix_idx+1);
+    if (replay_point == prefix_idx+1) replay_point--;
     prefix.pop_back();
     --prefix_idx;
-    ++curev().size;
-    assert(int(threads[curev().iid.get_pid()].event_indices.back()) == prefix_idx + 1);
-    threads[curev().iid.get_pid()].event_indices.back() = prefix_idx;
+    curev().size += old_size;
+    IPid p = curev().iid.get_pid();
+    assert(int(threads[p].event_indices.back()) == prefix_idx + 1);
+    for (unsigned i = threads[p].event_indices.size() - old_size;
+         i < threads[p].event_indices.size(); ++i) {
+      threads[p].event_indices[i] = prefix_idx;
+    }
   }
 
 
   /* Find an available thread. */
   for(unsigned p = 0; p < threads.size(); ++p){ // Loop through real threads
+#ifndef NDEBUG
+    if (!threads[p].event_indices.empty()) {
+      const Event &e = prefix[threads[p].event_indices.back()];
+      assert(e.iid.get_index() + e.size - 1 == threads[p].last_event_index());
+    }
+#endif
     if(threads[p].available &&
        (conf.max_search_depth < 0 || threads[p].last_event_index() < conf.max_search_depth)){
       /* Create a new Event */
@@ -175,6 +191,8 @@ void RFSCTraceBuilder::refuse_schedule(){
   prefix.pop_back();
   assert(int(threads[last_pid].event_indices.back()) == prefix_idx);
   threads[last_pid].event_indices.pop_back();
+  assert(threads[last_pid].event_indices.empty() ||
+         int(threads[last_pid].event_indices.back()) != prefix_idx);
   --prefix_idx;
   mark_unavailable(last_pid);
 }
