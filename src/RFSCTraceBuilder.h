@@ -548,6 +548,9 @@ public:
       /* Used to hide an event from being included in a consistency
        * query, as if it had been deleted */
       bool deleted = false;
+      /* If an event is modified, its causal suffix is implicitly
+       * deleted. */
+      bool modified;
 
       void add_happens_after(unsigned other);
       void decision_swap(TraceEvent &e);
@@ -570,6 +573,7 @@ public:
       Option<int> read_from() const;
       const std::vector<unsigned> &happens_after() const;
       bool deleted() const;
+      bool modified() const;
 
     private:
       /* Not the most memory compact, but it can be optimised later. */

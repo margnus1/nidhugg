@@ -1630,8 +1630,8 @@ void RFSCTraceBuilder::compute_prefixes() {
         if (!decision.try_alloc_unf(alt)) return;
         /* Ouch. We should do this on TraceOverlay instead. The blocker
          * is the can_swap_by_vclocks use below. */
-        int j = ++prefix_idx;
-        assert(prefix.size() == j);
+        int j = prefix_idx++;
+        assert(prefix.size() == size_t(j));
         prefix.emplace_back(IID<IPid>(jp, jidx), 0, std::move(sym));
         prefix[j].event = alt; // Only for debug print
         threads[jp].event_indices.push_back(j); // Not needed?
@@ -1648,6 +1648,7 @@ void RFSCTraceBuilder::compute_prefixes() {
           ol.prefix_mut(i).decision_swap(ol.prefix_mut(j));
           assert(!ol.prefix_at(i).pinned());
           ol.prefix_mut(i).pinned = true;
+          ol.prefix_mut(i).deleted = true;
 
           Leaf solution = try_sat(j, ol);
           if (!solution.is_bottom()) {
@@ -2147,7 +2148,8 @@ static bool prefix_keep_1(std::vector<bool> &acc, std::vector<bool> &del,
                           const RFSCTraceBuilder::TraceOverlay &trace) {
   if (del[i]) return false;
   const auto &e = trace.prefix_at(i);
-  if (acc[i]) return e.decision_depth() != decision;
+  assert(e.decision_depth() != decision || e.modified());
+  if (acc[i]) return !e.modified();
   if (e.deleted() || e.decision_depth() > decision) {
     del[i] = true;
     return false;
@@ -2185,9 +2187,9 @@ static bool prefix_keep_1(std::vector<bool> &acc, std::vector<bool> &del,
       }
     }
   }
-  /* Intentionally return false when depth == decision; this is how we
-   * exclude successors of that event. */
-  return e.decision_depth() != decision;
+  /* Intentionally return false when e.modified(); this is how we
+   * exclude successors of those events. */
+  return !e.modified();
 }
 
 std::vector<bool>
@@ -2326,12 +2328,12 @@ try_find_process_event(IPid pid, int index) const {
 RFSCTraceBuilder::TraceOverlay::TraceEvent::TraceEvent(const Event &e)
   : decision_ptr(e.decision_ptr.get()), happens_after(e.happens_after),
     sym(e.sym), size(e.size), iid(e.iid), read_from(e.read_from),
-    pinned(e.pinned), underlying(&e) {}
+    pinned(e.pinned), modified(false), underlying(&e) {}
 
 RFSCTraceBuilder::TraceOverlay::TraceEvent::
 TraceEvent(const IID<int> &iid, SymEv sym)
   : decision_ptr(nullptr), sym(std::move(sym)), size(1), iid(iid),
-    pinned(false) {}
+    pinned(false), modified(true) {}
 
 void RFSCTraceBuilder::TraceOverlay::TraceEvent::add_happens_after(unsigned event){
   assert(event != ~0u);
@@ -2383,6 +2385,10 @@ bool RFSCTraceBuilder::TraceOverlay::TraceEventConstRef::deleted() const {
   return overlay && overlay->deleted;
 }
 
+bool RFSCTraceBuilder::TraceOverlay::TraceEventConstRef::modified() const {
+  return overlay && overlay->modified;
+}
+
 RFSCTraceBuilder::TraceOverlay::
 TraceOverlay(const RFSCTraceBuilder *tb, const writes_by_addr_ty &writes,
              std::initializer_list<unsigned> preallocate)
@@ -2394,10 +2400,12 @@ TraceOverlay(const RFSCTraceBuilder *tb, writes_by_addr_ty &&writes,
   : writes_by_addr(std::move(writes)), blocking_awaits(tb->blocking_awaits),
     _prefix_size(tb->prefix.size()), tb(tb) {
   prefix_overlay.reserve(preallocate.size());
+  assert(std::is_sorted(preallocate.begin(), preallocate.end()));
   for (unsigned i : preallocate) {
     /* Assume that preallocate is sorted */
     auto it = prefix_overlay.try_emplace(prefix_overlay.end(), i, tb->prefix[i]);
     it->second.size = 1;
+    it->second.modified = true;
   }
 }
 
