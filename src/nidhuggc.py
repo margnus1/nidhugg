@@ -14,6 +14,7 @@ import time
 NIDHUGG=os.path.join(sys.path[0], 'nidhugg')
 CLANG='%%CLANG%%'
 CLANGXX='%%CLANGXX%%'
+GDB='gdb'
 
 nidhuggcparams = [
     {'name':'--help','help':'Prints this text.','param':False},
@@ -27,7 +28,8 @@ nidhuggcparams = [
     {'name':'--nidhugg','help':'Specify the path to the nidhugg binary.','param':'PATH'},
     {'name':'--no-spin-assume','help':'Don\'t use the spin-assume transformation on module before calling nidhugg.','param':False},
     {'name':'--no-assume-await','help':'Don\'t use the assume-await transformation on module before calling nidhugg.','param':False},
-    {'name':'--unroll','help':'Use unroll transformation on module before calling nidhugg.','param':'N'}
+    {'name':'--unroll','help':'Use unroll transformation on module before calling nidhugg.','param':'N'},
+    {'name':'--gdb','help':'Run nidhugg under gdb','param':False},
 ]
 
 nidhuggcparamaliases = {
@@ -45,7 +47,8 @@ nidhuggcparamaliases = {
     '-clangxx':'--clangxx',
     '-nidhugg':'--nidhugg',
     '-no-spin-assume':'--no-spin-assume',
-    '-unroll':'--unroll'
+    '-unroll':'--unroll',
+    '-gdb':'--gdb',
 }
 
 # The name (absolute path) of the temporary directory where all
@@ -54,6 +57,9 @@ tmpdir=None
 
 # If we should print verbosely
 verbose=False
+
+# If we should run nidhugg under gdb
+gdb=False
 
 def init_tmpdir():
     global tmpdir
@@ -69,7 +75,7 @@ def destroy_tmpdir():
 
 atexit.register(destroy_tmpdir)
 
-def run(cmd,ignoreret=False):
+def run(cmd, *, ignoreret=False):
     return_codes = [0, 42]
     cmdstr=''
     for s in cmd:
@@ -243,12 +249,13 @@ def transform(nidhuggcargs,transformargs,irfname):
 
 def run_nidhugg(nidhuggcargs,nidhuggargs,irfname):
     cmd = [NIDHUGG,irfname]+nidhuggargs
+    if gdb: cmd = [GDB,'--args'] + cmd
     return run(cmd)
 
 def main():
     try:
         global CLANG, CLANGXX, NIDHUGG
-        global verbose
+        global verbose, gdb
         t0 = time.time()
         (nidhuggcargs,compilerargs,nidhuggargs) = get_args()
         transformargs=[]
@@ -259,6 +266,8 @@ def main():
                 exit(0)
             elif argname == '--verbose':
                 verbose = True
+            elif argname == '--gdb':
+                gdb = True
             elif argname == '--clang':
                 CLANG=argarg
             elif argname == '--clangxx':
@@ -285,7 +294,7 @@ def main():
         irfname = transform(nidhuggcargs,transformargs,irfname)
         # Run stateless model-checker
         ret = run_nidhugg(nidhuggcargs,nidhuggargs,irfname)
-        print('Total wall-clock time: {0:.2f} s'.format(time.time()-t0))
+        if not(gdb): print('Total wall-clock time: {0:.2f} s'.format(time.time()-t0))
         exit(ret)
     except Exception as e:
         print("\nNidhuggc Error: {0}".format(str(e)))
