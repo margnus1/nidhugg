@@ -56,5 +56,7 @@ rmw_test2 Forbid : 300
 fib_bench_true_2 Forbid : 140
 simplified_dekker Forbid : 3
 broken_mutual_exclusion Forbid : 3
+revealed_write Forbid : 2
+revealed_write_reverse Forbid : 2
 # Total number of traces: 1116
 # Total running time: 9.51 s
