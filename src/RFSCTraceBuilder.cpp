@@ -280,8 +280,6 @@ bool RFSCTraceBuilder::reset(){
 
   assert(l.prefix.empty() == (work_item->depth == -1));
 
-  replay_point = l.prefix.size();
-
   assert(planned_awaits.empty());
   std::vector<Event> new_prefix;
   new_prefix.reserve(l.prefix.size()); // Overestimate; also includes blocked events
@@ -300,6 +298,8 @@ bool RFSCTraceBuilder::reset(){
       iid_map_step(iid_map, new_prefix.back());
     }
   }
+
+  replay_point = new_prefix.size();
 
 #ifndef NDEBUG
   for (int d = 0; d < work_item->depth; ++d) {
@@ -1144,7 +1144,8 @@ bool RFSCTraceBuilder::compute_unfolding() {
     const std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> &decision
       = read_from == -1 ? nullptr : prefix[read_from].event;
     if (!(*node)->try_alloc_unf(decision)) {
-      llvm::dbgs() << "This is redundant, bailing out\n";
+      if (conf.debug_print_on_reset)
+        llvm::dbgs() << "This is redundant, bailing out\n";
       return false;
     } else {
       /* Ugly, but we can't use construct_sibling() since it adds the
@@ -1169,6 +1170,8 @@ bool RFSCTraceBuilder::compute_unfolding() {
     } else if (jump_depth || int(i) >= replay_point) {
       if (is_load(i)) {
         assert(jump_depth || !prefix[i].pinned);
+        assert(prefix[i].get_decision_depth() == -1
+               || prefix[i].get_decision_depth() > *jump_depth);
         prefix[i].pinned = false;
         const std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> &decision
           = is_lock_type(i) ? prefix[i].event : prefix[i].event->read_from;
@@ -1640,7 +1643,7 @@ void RFSCTraceBuilder::compute_prefixes() {
 
         if (can_swap_by_vclocks(i, j)) {
           if (conf.debug_print_on_reset)
-            llvm::dbgs() << "Trying replace " << pretty_index(i)
+            llvm::dbgs() << "Trying to replace " << pretty_index(i)
                          << " with deadlocked " << pretty_index(j)
                          << ", after " << pretty_index(original_read_from);
           TraceOverlay ol(this, writes_by_address, {unsigned(i), unsigned(j)});
