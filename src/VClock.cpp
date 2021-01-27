@@ -29,6 +29,14 @@ VClock<int>::VClock(const std::vector<int> &v) : vec(v) {
 #endif
 }
 
+VClock<int>::VClock(std::vector<int> &&v) : vec(std::move(v)) {
+#ifndef NDEBUG
+  for(unsigned i = 0; i < vec.size(); ++i){
+    assert(vec[i] >= 0);
+  }
+#endif
+}
+
 VClock<int>::VClock(const VClock &vc) : vec(vc.vec) {}
 
 VClock<int>::VClock(VClock &&vc) : vec(std::move(vc.vec)) {}

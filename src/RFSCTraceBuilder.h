@@ -491,6 +491,14 @@ protected:
    * otherwise true; */
   bool compute_unfolding();
 
+  /* Computes alternative traces based on the current trace by changing
+   * single reads-from assignments, or swapping adjacent pairs of
+   * locks/rmws. Requires unfolding&decision nodes and vector clocks. */
+  void plan(VClock<IPid> horizon);
+
+  /* A vector clock that includes all events in this trace */
+  VClock<IPid> top_clock() const;
+
   // TODO: Refactor RFSCUnfoldingTree and and deprecate these methods.
   // Workaround due to require access to parent while not having a root-node
   std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> unfold_find_unfolding_node

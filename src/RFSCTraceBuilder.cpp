@@ -1045,11 +1045,7 @@ void RFSCTraceBuilder::compute_vclocks(){
 
   /* The top of our vector clock lattice, initial value of the below
    * clock (excluding itself) for evey event */
-  VClock<IPid> top;
-  for (unsigned i = 0; i < threads.size(); ++i)
-    top[i] = threads[i].event_indices.size();
-  below_clocks.assign(threads.size(), prefix.size(), top);
-
+  below_clocks.assign(threads.size(), prefix.size(), top_clock());
   for (unsigned i = prefix.size();;) {
     if (i == 0) break;
     auto clock = below_clocks[--i];
@@ -1060,6 +1056,13 @@ void RFSCTraceBuilder::compute_vclocks(){
       clock -= below_clocks[j];
     }
   }
+}
+
+VClock<int> RFSCTraceBuilder::top_clock() const {
+  std::vector<int> top(threads.size());
+  for (unsigned i = 0; i < threads.size(); ++i)
+    top[i] = threads[i].event_indices.size();
+  return VClock<IPid>(std::move(top));
 }
 
 bool RFSCTraceBuilder::compute_unfolding() {
@@ -1479,6 +1482,10 @@ void RFSCTraceBuilder::compute_prefixes() {
 
   if (was_redundant) return;
 
+  plan(top_clock());
+}
+
+void RFSCTraceBuilder::plan(VClock<IPid> horizon) {
   Timing::Guard neighbours_timing_guard(neighbours_context);
   if (conf.debug_print_on_reset)
     llvm::dbgs() << "Computing prefixes\n";
@@ -1499,6 +1506,7 @@ void RFSCTraceBuilder::compute_prefixes() {
   std::vector<std::unordered_map<SymAddr,std::vector<unsigned>>>
     writes_by_process_and_address(threads.size());
   for (unsigned j = 0; j < prefix.size(); ++j) {
+    if (!horizon.includes(prefix[j].iid)) continue;
     if (is_store(j))      writes_by_address.mut(get_addr(j).addr).push_back(j);
     if (is_store(j))
       writes_by_process_and_address[prefix[j].iid.get_pid()][get_addr(j).addr]
@@ -1576,6 +1584,7 @@ void RFSCTraceBuilder::compute_prefixes() {
   assert(prefix_idx == int(prefix.size()));
   /* No. Proceed with */
   for (unsigned i = 0; i < prefix.size(); ++i) {
+    if (!horizon.includes(prefix[i].iid)) continue;
     auto try_swap = [&](int i, int j) {
         int original_read_from = *prefix[i].read_from;
         std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> alt

@@ -110,6 +110,7 @@ public:
    * initialized to m[d], and all other clocks are initialized to
    * 0. */
   VClock(const std::vector<int> &m);
+  VClock(std::vector<int> &&m);
   /* Create a vector clock which is a copy of vc. */
   VClock(const VClock<int> &vc);
   VClock(VClock<int> &&vc);
