@@ -148,6 +148,9 @@ protected:
     /* Indices in prefix of the events of this process.
      */
     std::vector<unsigned> event_indices;
+    /* Inverse priority (like unix nice). Applies to the very next event
+     * only. */
+    unsigned reluctance = 0;
 
     /* The iid-index of the last event of this thread, or 0 if it has not
      * executed any events yet.
@@ -502,7 +505,7 @@ protected:
    */
   void plan(VClock<IPid> horizon, std::vector<unsigned> blocked_in_prefix);
 
-  void debug_print(VClock<IPid> horizon) const;
+  void debug_print(const VClock<IPid> &horizon) const;
 
   /* A vector clock that includes all events in this trace */
   VClock<IPid> top_clock() const;

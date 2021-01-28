@@ -158,6 +158,7 @@ bool RFSCTraceBuilder::schedule(int *proc, int *aux, int *alt, bool *dryrun){
     }
   }
 
+  Option<unsigned> found_reluctance;
 
   /* Find an available thread. */
   for(unsigned p = 0; p < threads.size(); ++p){ // Loop through real threads
@@ -168,16 +169,24 @@ bool RFSCTraceBuilder::schedule(int *proc, int *aux, int *alt, bool *dryrun){
     }
 #endif
     if(threads[p].available &&
-       (conf.max_search_depth < 0 || threads[p].last_event_index() < conf.max_search_depth)){
-      /* Create a new Event */
-      seen_effect = false;
-      ++prefix_idx;
-      assert(prefix_idx == int(prefix.size()));
-      threads[p].event_indices.push_back(prefix_idx);
-      prefix.emplace_back(IID<IPid>(IPid(p),threads[p].last_event_index()));
+       (conf.max_search_depth < 0 || threads[p].last_event_index() < conf.max_search_depth)
+       && (!found_reluctance || threads[p].reluctance < *found_reluctance)){
       *proc = p;
-      return true;
+      found_reluctance = threads[p].reluctance;
     }
+  }
+
+  if (found_reluctance) {
+    /* Create a new Event */
+    unsigned p = *proc;
+    seen_effect = false;
+    ++prefix_idx;
+    assert(prefix_idx == int(prefix.size()));
+    threads[p].event_indices.push_back(prefix_idx);
+    assert(threads[p].reluctance == *found_reluctance);
+    threads[p].reluctance = 0;
+    prefix.emplace_back(IID<IPid>(IPid(p),threads[p].last_event_index()));
+    return true;
   }
 
   return false; // No available threads
@@ -420,7 +429,7 @@ void RFSCTraceBuilder::debug_print() const {
   debug_print(top_clock());
 }
 
-void RFSCTraceBuilder::debug_print(VClock<IPid> horizon) const {
+void RFSCTraceBuilder::debug_print(const VClock<IPid> &horizon) const {
   llvm::dbgs() << "RFSCTraceBuilder (debug print, replay until " << replay_point;
   if (was_redundant) llvm::dbgs() << ", redundant";
   llvm::dbgs() << "):\n";
@@ -437,7 +446,7 @@ void RFSCTraceBuilder::debug_print(VClock<IPid> horizon) const {
     iid_offs = std::max(iid_offs,2*ipid+int(iid_string(i).size()));
     dec_offs = std::max(dec_offs,int(std::to_string(prefix[i].get_decision_depth()).size())
                         + (prefix[i].pinned ? 1 : 0));
-    unf_offs = std::max(unf_offs,int(std::to_string(prefix[i].event->seqno).size()));
+    unf_offs = std::max(unf_offs,int((prefix[i].event ? std::to_string(prefix[i].event->seqno) : "-").size()));
     rf_offs = std::max(rf_offs,prefix[i].read_from ?
                        int(std::to_string(*prefix[i].read_from).size())
                        : 1);
@@ -465,7 +474,7 @@ void RFSCTraceBuilder::debug_print(VClock<IPid> horizon) const {
                  << rpad(iid_string(i),iid_offs-ipid*2)
                  << " " << lpad((prefix[i].pinned ? "*" : "")
                                 + std::to_string(prefix[i].get_decision_depth()),dec_offs)
-                 << " " << lpad(std::to_string(prefix[i].event->seqno),unf_offs)
+                 << " " << lpad(prefix[i].event ? std::to_string(prefix[i].event->seqno) : "-",unf_offs)
                  << " " << lpad(prefix[i].read_from ? std::to_string(*prefix[i].read_from) : "-",rf_offs)
                  << " " << rpad(prefix[i].clock.to_string(),clock_offs)
                  << " " << prefix[i].sym.to_string() << "\n";
@@ -559,24 +568,25 @@ bool RFSCTraceBuilder::load_await(const SymAddrSize &ml, AwaitCond cond) {
   if (ml_await != blocking_awaits.end()) {
     IPid current = curev().iid.get_pid();
     auto it = ml_await->second.find(current);
-    assert(!curev().decision_ptr);
-    assert(it != ml_await->second.end());
-    if (it->second.decision_ptr) {
-      std::swap(curev().decision_ptr, it->second.decision_ptr);
-      if (!prefix_first_unblock_jump
-          || curev().decision_ptr->depth
-          < prefix[*prefix_first_unblock_jump].decision_ptr->depth) {
-        prefix_first_unblock_jump = prefix_idx;
+    if (it != ml_await->second.end()) {
+      assert(!curev().decision_ptr);
+      if (it->second.decision_ptr) {
+        std::swap(curev().decision_ptr, it->second.decision_ptr);
+        if (!prefix_first_unblock_jump
+            || curev().decision_ptr->depth
+            < prefix[*prefix_first_unblock_jump].decision_ptr->depth) {
+          prefix_first_unblock_jump = prefix_idx;
+        }
       }
+      curev().planned_read_from = it->second.planned_read_from;
+      ml_await->second.erase(it);
+      /* Delete the memory location if it became empty */
+      if (ml_await->second.empty())
+        blocking_awaits.erase(ml_await);
+      if (conf.debug_print_on_reset)
+        llvm::dbgs() << "Clearing blocking await by " << threads[current].cpid
+                     << "\n";
     }
-    curev().planned_read_from = it->second.planned_read_from;
-    ml_await->second.erase(it);
-    /* Delete the memory location if it became empty */
-    if (ml_await->second.empty())
-      blocking_awaits.erase(ml_await);
-    if (conf.debug_print_on_reset)
-      llvm::dbgs() << "Clearing blocking await by " << threads[current].cpid
-                   << "\n";
   }
 
   do_load(ml);
@@ -593,14 +603,30 @@ bool RFSCTraceBuilder::load_await_fail(const SymAddrSize &ml, AwaitCond cond) {
                  << "\n";
 
   auto ret = ml_awaits.try_emplace(current, index, std::move(cond));
-  assert(ret.second);
+  /* It can be that we already have am entry in blocking_awaits for this
+   * event in the following case: A blocking await is enabled by a
+   * store, but before we schedule it, yet another store disables it
+   * again. At this point, the interpreter will not call
+   * mark_unavailable(), and therefore, we might schedule it and get
+   * another call to load_await_fail().
+   */
+  assert(ret.second || !replay);
   BlockedAwait &aw = ret.first->second;
-  if (replay) {
-    aw.pinned = curev().pinned;
-    aw.decision_ptr = std::move(curev().decision_ptr);
-    aw.planned_read_from = mem[ml.addr].last_update;
+  if (ret.second) {
+    if (replay) {
+      aw.pinned = curev().pinned;
+      aw.decision_ptr = std::move(curev().decision_ptr);
+      aw.planned_read_from = mem[ml.addr].last_update;
+      /* */
+      assert(aw.get_decision_depth() >= 0);
+      threads[current].reluctance = UINT_MAX - (1+aw.get_decision_depth());
+    }
+    aw.index = curev().iid.get_index();
+  } else {
+    assert(aw.index == curev().iid.get_index());
+    assert(aw.cond.op == cond.op);
+    assert(memcmp(aw.cond.operand.get(), cond.operand.get(), ml.size) == 0);
   }
-  aw.index = curev().iid.get_index();
   return true;
 }
 
@@ -1148,9 +1174,7 @@ void RFSCTraceBuilder::compute_unfolding_and_plan() {
    * jumps have taken place) */
   VClock<IPid> first_plan_horizon = top_clock();
   for (unsigned i : jumps) {
-    VClock<IPid> below_excluding_self = below_clocks[i];
-    below_excluding_self[prefix[i].iid.get_pid()]++;
-    first_plan_horizon -= below_excluding_self;
+    first_plan_horizon -= below_clocks[i];
   }
 
   /* Build decision nodes as-planned */
@@ -1179,6 +1203,7 @@ void RFSCTraceBuilder::compute_unfolding_and_plan() {
     }
   }
 
+  std::vector<std::tuple<SymAddrSize,IPid,int>> stashed_await_ons;
   /* Assign decision pointers to blocking awaits for first jump */
   for (auto &addr_awaits : blocking_awaits) {
     for (auto &pid_cond : addr_awaits.second) {
@@ -1186,9 +1211,12 @@ void RFSCTraceBuilder::compute_unfolding_and_plan() {
       assert(!aw.pinned);
       /* XXX: Unnecessary insertion */
       aw.read_from = mem[addr_awaits.first.addr].last_update;
-      int read_from = aw.planned_read_from.value_or(aw.read_from);
+      if (aw.planned_read_from && *aw.planned_read_from != aw.read_from) {
+        stashed_await_ons.emplace_back(addr_awaits.first, pid_cond.first, aw.read_from);
+        aw.read_from = *aw.planned_read_from;
+      }
       const std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> &decision
-        = read_from == -1 ? nullptr : prefix[read_from].event;
+        = aw.read_from == -1 ? nullptr : prefix[aw.read_from].event;
       if (aw.decision_ptr) {
         assert(aw.decision_ptr->unfold_node == decision.get());
       } else {
@@ -1212,7 +1240,7 @@ void RFSCTraceBuilder::compute_unfolding_and_plan() {
    * differ), we need to assign correct unfolding nodes and rebuild our
    * decision pointers to be able to do planning for the trace
    * as-executed. */
-  if (!jumps.empty()) {
+  if (!jumps.empty() || !stashed_await_ons.empty()) {
     /* Reset unfolding nodes and read-froms to as-executed */
     for (unsigned ix = 0; ix < jumps.size(); ++ix) {
       unsigned i = jumps[ix];
@@ -1222,6 +1250,10 @@ void RFSCTraceBuilder::compute_unfolding_and_plan() {
       IID<IPid> iid = prefix[i].iid;
       prefix[i].event = unfolding_tree.find_unfolding_node
         (threads[iid.get_pid()].cpid, get_unf_parent(iid), read_from);
+    }
+    for (const auto &sao : stashed_await_ons) {
+      blocking_awaits[std::get<0>(sao)].find(std::get<1>(sao))->second.read_from
+        = std::get<2>(sao);
     }
 
     /* Look for a decision-tree jump */
@@ -1235,13 +1267,14 @@ void RFSCTraceBuilder::compute_unfolding_and_plan() {
         BlockedAwait &aw = pid_cond.second;
         assert(!aw.pinned);
         /* XXX: Unnecessary insertion */
-        aw.read_from = mem[addr.addr].last_update;
         const std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> &decision
           = aw.read_from == -1 ? nullptr : prefix[aw.read_from].event;
         if (aw.decision_ptr && aw.decision_ptr->unfold_node != decision.get()
             && (!jump_depth || aw.decision_ptr->depth < *jump_depth)) {
           assert(aw.planned_read_from &&
                  *aw.planned_read_from != aw.read_from);
+          assert(*aw.planned_read_from == -1
+                 || prefix[aw.read_from].clock.includes(prefix[*aw.planned_read_from].iid));
           jump_depth = aw.decision_ptr->depth;
           await_jump = &pid_cond;
           first_jump_is_await = true;
