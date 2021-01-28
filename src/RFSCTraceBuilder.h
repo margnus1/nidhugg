@@ -240,6 +240,7 @@ protected:
                                               index(index) {}
     AwaitCond cond;
     std::shared_ptr<DecisionNode> decision_ptr;
+    Option<int> planned_read_from;
     /* We don't use an IID as to not duplicate the IPid (used as key) */
     int index;
     int read_from = -1;
@@ -327,7 +328,7 @@ protected:
     /* The unfolding event corresponding to this executed event. */
     std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> event;
 
-    Option<int> read_from;
+    Option<int> read_from, planned_read_from;
     /* Symbolic representation of the globally visible operation of this event.
      * Empty iff !may_conflict
      */
@@ -486,18 +487,26 @@ protected:
    * should it be executed */
   bool check_happens_before_blocked(IID<IPid> event, IPid blocked,
                                     const SymAddr &blocked_on_addr) const;
-  /* Assigns unfolding events to all executed steps. Returns false if
-   * the current execution is found to be redundant with some other,
-   * otherwise true; */
-  bool compute_unfolding();
+  /* Assigns unfolding events to all executed steps, and calls plan(). */
+  void compute_unfolding_and_plan();
 
   /* Computes alternative traces based on the current trace by changing
    * single reads-from assignments, or swapping adjacent pairs of
    * locks/rmws. Requires unfolding&decision nodes and vector clocks. */
   void plan(VClock<IPid> horizon);
 
+  void debug_print(VClock<IPid> horizon) const;
+
   /* A vector clock that includes all events in this trace */
   VClock<IPid> top_clock() const;
+
+  /* Get the unfolding node of some events's po-predecessor (or null, if
+   * the first event) */
+  const std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> &
+  get_unf_parent(IID<IPid> iid) const;
+  /* Get the unfolding node of an event in prefix, or null, if -1. */
+  const std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> &
+  get_unf_read_from(int read_from) const;
 
   // TODO: Refactor RFSCUnfoldingTree and and deprecate these methods.
   // Workaround due to require access to parent while not having a root-node
@@ -591,7 +600,7 @@ public:
 
     /* We allow TraceEvent to not be copy-constructible by forbidding it
      * here too. */
-    TraceOverlay(const TraceOverlay&) = delete;
+    // TraceOverlay(const TraceOverlay&) = delete;
     TraceOverlay(TraceOverlay&&) = default;
     TraceOverlay &operator=(const TraceOverlay&) = delete;
     TraceOverlay &operator=(TraceOverlay&&) = default;
@@ -611,6 +620,8 @@ public:
     TraceOverlay(const RFSCTraceBuilder*, const writes_by_addr_ty&,
                  std::initializer_list<unsigned> preallocate = {});
     TraceOverlay(const RFSCTraceBuilder*, writes_by_addr_ty&&,
+                 std::initializer_list<unsigned> preallocate = {});
+    TraceOverlay(const TraceOverlay &,
                  std::initializer_list<unsigned> preallocate = {});
 
     std::size_t prefix_size() const;
@@ -633,7 +644,9 @@ public:
 
   private:
     boost::container::flat_map<unsigned,TraceEvent> prefix_overlay;
-    std::size_t _prefix_size;
+    /* ugly hack of the century */
+  public:std::size_t _prefix_size;
+  private:
     const RFSCTraceBuilder *tb;
   };
 

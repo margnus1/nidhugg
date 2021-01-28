@@ -97,6 +97,29 @@ private:
   std::map<DOM,int> clocks;
 };
 
+class VClockRef final {
+  friend class VClockVec;
+  friend class VClock<int>;
+  VClockRef(int* base, unsigned size) : base(base), _size(size) {}
+  int* base;
+  unsigned _size;
+public:
+  VClockRef &operator=(const VClock<int> vc);
+  /* Assign this vector clock to (*this - vc). */
+  VClockRef &operator-=(const VClockRef vc);
+  unsigned size() const { return _size; }
+  int operator[](int d) const { assert(d >= 0 && unsigned(d) < _size); return base[d]; };
+  int &operator[](int d) { assert(d >= 0 && unsigned(d) < _size); return base[d]; };
+
+  /* *** Partial order comparisons ***
+   *
+   * A vector clock u is considered strictly less than a vector clock
+   * v iff for all d in DOM, it holds that u[d] <= v[d], and there is
+   * at least one d such that u[d] < v[d].
+   */
+  bool lt(const VClockRef vc) const;
+};
+
 template<>
 class VClock<int> final {
 public:
@@ -114,6 +137,7 @@ public:
   /* Create a vector clock which is a copy of vc. */
   VClock(const VClock<int> &vc);
   VClock(VClock<int> &&vc);
+  VClock(VClockRef ref);
   /* Create a vector clock that is a translation of vc, where the
    * clock of t[i] is initialized to vc[i]. The clocks of all d which
    * do not occur in t are initialized to 0.
@@ -188,27 +212,7 @@ public:
   VClockVec() : clock_size(0) {}
   VClockVec(unsigned clock_size, std::size_t size)
     : vec(clock_size*size), clock_size(clock_size) {}
-  class Ref final {
-    friend class VClockVec;
-    Ref(int* base, unsigned size) : base(base), _size(size) {}
-    int* base;
-    unsigned _size;
-  public:
-    Ref &operator=(const VClock<int> vc);
-    /* Assign this vector clock to (*this - vc). */
-    Ref &operator-=(const Ref vc);
-    unsigned size() const { return _size; }
-    int operator[](int d) const { assert(d >= 0 && unsigned(d) < _size); return base[d]; };
-    int &operator[](int d) { assert(d >= 0 && unsigned(d) < _size); return base[d]; };
-
-    /* *** Partial order comparisons ***
-     *
-     * A vector clock u is considered strictly less than a vector clock
-     * v iff for all d in DOM, it holds that u[d] <= v[d], and there is
-     * at least one d such that u[d] < v[d].
-     */
-    bool lt(const Ref vc) const;
-  };
+  typedef VClockRef Ref;
   Ref operator[](int d) {
     assert (d >= 0 && (std::size_t(d)+1)*clock_size <= vec.size());
     return { vec.data() + (d*clock_size), clock_size };

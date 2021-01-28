@@ -41,6 +41,8 @@ VClock<int>::VClock(const VClock &vc) : vec(vc.vec) {}
 
 VClock<int>::VClock(VClock &&vc) : vec(std::move(vc.vec)) {}
 
+VClock<int>::VClock(VClockRef ref) : vec(ref.base, ref.base + ref._size) {}
+
 VClock<int>::VClock(const std::initializer_list<int> &il) : vec(il) {
 #ifndef NDEBUG
   for(unsigned i = 0; i < vec.size(); ++i){
@@ -216,7 +218,7 @@ std::string VClock<int>::to_string() const{
   return ss.str();
 }
 
-VClockVec::Ref &VClockVec::Ref::operator-=(const Ref vc) {
+VClockRef &VClockRef::operator-=(const VClockRef vc) {
   assert(vc._size == _size);
   for (unsigned i = 0; i < _size; ++i) {
     if(vc.base[i] < base[i]){
@@ -226,14 +228,14 @@ VClockVec::Ref &VClockVec::Ref::operator-=(const Ref vc) {
   return *this;
 }
 
-VClockVec::Ref &VClockVec::Ref::operator=(const VClock<int> vc) {
+VClockRef &VClockRef::operator=(const VClock<int> vc) {
   for (unsigned i = 0; i < _size; ++i) {
     base[i] = vc[i];
   }
   return *this;
 }
 
-bool VClockVec::Ref::lt(const Ref vc) const{
+bool VClockRef::lt(const VClockRef vc) const{
   assert(_size == vc._size);
   bool less = false;
   for(unsigned i = 0; i < _size; ++i){
