@@ -183,6 +183,10 @@ public:
     return iid.get_index() <= (*this)[iid.get_pid()];
   };
 
+  bool reverse_includes(const IID<int> &iid) const {
+    return iid.get_index() >= (*this)[iid.get_pid()];
+  };
+
   /* *** Partial order comparisons ***
    *
    * A vector clock u is considered strictly less than a vector clock

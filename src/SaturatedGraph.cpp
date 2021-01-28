@@ -85,6 +85,8 @@ void SaturatedGraph::add_event(Pid pid, ExtID extid, EventKind kind,
   }
   if (read_from) {
     IFTRACE(std::cerr << "Adding read-from between " << etos(*read_from) << " and " << extid << "\n");
+    assert(events.at(*read_from).is_store);
+    assert(events.at(*read_from).addr == addr);
     events.mut(*read_from).readers.push_back(id);
   } else if (is_load) {
     /* We do loads first so that in the case of RMW we do not find

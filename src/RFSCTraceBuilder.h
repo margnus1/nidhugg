@@ -241,6 +241,7 @@ protected:
     AwaitCond cond;
     std::shared_ptr<DecisionNode> decision_ptr;
     Option<int> planned_read_from;
+    Option<unsigned> deleted_unblocked_position_in_prefix;
     /* We don't use an IID as to not duplicate the IPid (used as key) */
     int index;
     int read_from = -1;
@@ -253,6 +254,8 @@ protected:
       return decision_ptr ? decision_ptr->depth : -1;
     }
   };
+  /* XXX: Should we use gen::map instead for constant-time copies into
+   * TraceOverlay? */
   typedef boost::container::flat_map
   <SymAddrSize, boost::container::flat_map<IPid, BlockedAwait>>
   blocking_awaits_ty;
@@ -492,8 +495,12 @@ protected:
 
   /* Computes alternative traces based on the current trace by changing
    * single reads-from assignments, or swapping adjacent pairs of
-   * locks/rmws. Requires unfolding&decision nodes and vector clocks. */
-  void plan(VClock<IPid> horizon);
+   * locks/rmws. Requires unfolding&decision nodes and vector clocks.
+   * If prefix contains any awaits whose read-from assignments make them
+   * blocking, they must be listed in blocked_in_prefix. Normally, these
+   * events are not in prefix but in blocking_awaits.
+   */
+  void plan(VClock<IPid> horizon, std::vector<unsigned> blocked_in_prefix);
 
   void debug_print(VClock<IPid> horizon) const;
 

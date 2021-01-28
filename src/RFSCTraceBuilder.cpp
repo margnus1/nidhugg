@@ -459,7 +459,7 @@ void RFSCTraceBuilder::debug_print(VClock<IPid> horizon) const {
 
   for(unsigned i = 0; i < prefix.size(); ++i){
     IPid ipid = prefix[i].iid.get_pid();
-    llvm::dbgs() << (horizon.includes(prefix[i].iid) ? " " : "-")
+    llvm::dbgs() << (horizon.reverse_includes(prefix[i].iid) ? "-" : " ")
                  << lpad(std::to_string(i),idx_offs)
                  << rpad("",1+ipid*2)
                  << rpad(iid_string(i),iid_offs-ipid*2)
@@ -1069,7 +1069,7 @@ void RFSCTraceBuilder::compute_vclocks(){
 VClock<int> RFSCTraceBuilder::top_clock() const {
   std::vector<int> top(threads.size());
   for (unsigned i = 0; i < threads.size(); ++i)
-    top[i] = threads[i].event_indices.size();
+    top[i] = threads[i].event_indices.size()+1;
   return VClock<IPid>(std::move(top));
 }
 
@@ -1160,7 +1160,7 @@ void RFSCTraceBuilder::compute_unfolding_and_plan() {
   for (unsigned i = 0; i < prefix.size(); ++i) {
     /* These nodes would both go unused and have incorrect unfolding
      * events. */
-    if (!first_plan_horizon.includes(prefix[i].iid)) continue;
+    if (first_plan_horizon.reverse_includes(prefix[i].iid)) continue;
     if (int(i) >= replay_point) {
       if (is_load(i)) {
         assert(!prefix[i].pinned);
@@ -1201,9 +1201,12 @@ void RFSCTraceBuilder::compute_unfolding_and_plan() {
   /* XXX: Before we do this, we really should allocate the decision node
    * for the jump; otherwise, it might be rediscovered and scheduled by
    * jump(), leading to unnecessary redundant execution. */
-  if (conf.debug_print_on_reset && !jumps.empty())
-    llvm::dbgs() << "There are some decision jumps, first we pretend they're not there\n";
-  plan(first_plan_horizon);
+  if (conf.debug_print_on_reset && !jumps.empty()) {
+    llvm::dbgs() << "There are some decision jumps ([";
+    for (unsigned i : jumps) llvm::dbgs() << i << ",";
+    llvm::dbgs() << "]), first we pretend they're not there\n";
+  }
+  plan(first_plan_horizon, jumps);
 
   /* Now, if we're jumping (i.e. as-planned and as-executed traces
    * differ), we need to assign correct unfolding nodes and rebuild our
@@ -1331,7 +1334,7 @@ void RFSCTraceBuilder::compute_unfolding_and_plan() {
       }
     }
     work_item = std::move(deepest_node);
-    plan(top_clock());
+    plan(top_clock(), {});
   }
 }
 
@@ -1603,7 +1606,8 @@ void RFSCTraceBuilder::compute_prefixes() {
   compute_unfolding_and_plan();
 }
 
-void RFSCTraceBuilder::plan(VClock<IPid> horizon) {
+void RFSCTraceBuilder::plan(VClock<IPid> horizon,
+                            std::vector<unsigned> blocked_in_prefix) {
   if(conf.debug_print_on_reset){
     llvm::dbgs() << " === RFSCTraceBuilder state ===\n";
     debug_print(horizon);
@@ -1630,7 +1634,7 @@ void RFSCTraceBuilder::plan(VClock<IPid> horizon) {
   std::vector<std::unordered_map<SymAddr,std::vector<unsigned>>>
     writes_by_process_and_address(threads.size());
   for (unsigned j = 0; j < prefix.size(); ++j) {
-    if (!horizon.includes(prefix[j].iid)) continue;
+    if (horizon.reverse_includes(prefix[j].iid)) continue;
     if (is_store(j))      writes_by_address.mut(get_addr(j).addr).push_back(j);
     if (is_store(j))
       writes_by_process_and_address[prefix[j].iid.get_pid()][get_addr(j).addr]
@@ -1644,35 +1648,63 @@ void RFSCTraceBuilder::plan(VClock<IPid> horizon) {
   TraceOverlay horizon_overlay(this, writes_by_address);
   for (unsigned p = 0; p < threads.size(); ++p) {
     if (horizon[p] < threads[p].last_event_index()) {
-      const int i = find_process_event(p, horizon[p]+1);
+      const int i = find_process_event(p, horizon[p]);
       auto &e = horizon_overlay.prefix_mut(i);
-      if (e.iid.get_index() < horizon[p]+1) {
+      if (e.iid.get_index() < horizon[p]) {
         e.size = 1;
         e.modified = true;
         if (conf.debug_print_on_reset)
           llvm::dbgs() << "Truncating " << i << " by horizon\n";
       } else {
-        assert(e.iid.get_index() == horizon[p]+1);
+        assert(e.iid.get_index() == horizon[p]);
         e.deleted = true;
         if (conf.debug_print_on_reset)
           llvm::dbgs() << "Deleting " << i << " by horizon\n";
       }
     }
   }
+  for (unsigned i : blocked_in_prefix) {
+    auto &e = horizon_overlay.prefix_mut(i);
+    assert(!e.pinned);
+    e.modified = false; // We're deleting it now
+    e.deleted = true;
+    SymAddrSize addr = e.sym.addr();
+    AwaitCond cond = e.sym.cond();
+    auto ret = horizon_overlay.blocking_awaits[addr].try_emplace
+      (e.iid.get_pid(), e.iid.get_index(), cond);
+    assert(ret.second);
+    BlockedAwait &aw = ret.first->second;
+    assert(e.decision_ptr == prefix[i].decision_ptr.get());
+    aw.decision_ptr = prefix[i].decision_ptr;
+    aw.read_from = *e.read_from;
+    aw.deleted_unblocked_position_in_prefix = i;
+  }
 
   /* See if any blocking await can be satisfied */
-  for (auto &addr_awaits : blocking_awaits) {
+  for (auto &addr_awaits : horizon_overlay.blocking_awaits) {
     const SymAddrSize &addr = addr_awaits.first;
     for (auto &pid_cond : addr_awaits.second) {
       TraceOverlay ol(horizon_overlay);
       IPid pid = pid_cond.first;
-      const AwaitCond &cond = pid_cond.second.cond;
-      unsigned i = prefix_idx;
-      assert(i == prefix.size());
-      auto iidx = threads[pid].last_event_index()+1;
-      assert(prefix_idx == int(prefix.size()));
-      auto &e = ol.prefix_emplace_back(IID<IPid>(pid, iidx),
-                                       SymEv::LoadAwait(addr, cond));
+      const BlockedAwait &aw = pid_cond.second;
+      const AwaitCond &cond = aw.cond;
+      assert(unsigned(prefix_idx) == prefix.size());
+      auto iidx = pid_cond.second.index;
+      unsigned i = aw.deleted_unblocked_position_in_prefix.value_or(prefix_idx);
+      TraceOverlay::TraceEvent *ep;
+      if (aw.deleted_unblocked_position_in_prefix) {
+        ep = &ol.prefix_mut(i);
+        ep->deleted = false;
+        ep->modified = true;
+        ep->size = 1;
+        assert(!ep->pinned);
+        assert(ep->iid == IID<IPid>(pid, iidx));
+        assert(ep->sym == SymEv::LoadAwait(addr, cond));
+      } else {
+        ep = &ol.prefix_emplace_back(IID<IPid>(pid, iidx),
+                                     SymEv::LoadAwait(addr, cond));
+      }
+      auto &e = *ep;
       maybe_add_spawn_happens_after(e);
       ol.blocking_awaits[addr].erase(pid);
 
@@ -1727,7 +1759,7 @@ void RFSCTraceBuilder::plan(VClock<IPid> horizon) {
   assert(prefix_idx == int(prefix.size()));
   /* No. Proceed with */
   for (unsigned i = 0; i < prefix.size(); ++i) {
-    if (!horizon.includes(prefix[i].iid)) continue;
+    if (horizon.reverse_includes(prefix[i].iid)) continue;
     auto try_swap = [&](int i, int j) {
         int original_read_from = *prefix[i].read_from;
         std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> alt
@@ -1956,6 +1988,7 @@ void RFSCTraceBuilder::plan(VClock<IPid> horizon) {
         if (is_store(i) && end != writes.end() && is_load(*end)) ++end;
         assert(start <= end);
         for (auto it = start; it != end; ++it) {
+          assert(!horizon.reverse_includes(prefix[*it].iid));
           try_read_from(*it);
         }
       }
@@ -2119,8 +2152,15 @@ RFSCTraceBuilder::try_sat
     for (const auto &await : awaits) {
       IPid pid = await.pid_await.first;
       Option<IID<IPid>> read_from;
-      if (await.pid_await.second.read_from != -1)
-        read_from = trace.prefix_at(await.pid_await.second.read_from).iid();
+      if (await.pid_await.second.read_from != -1) {
+        const auto &w = trace.prefix_at(await.pid_await.second.read_from);
+        if (conf.debug_print_on_reset) {
+          llvm::dbgs() << "Await by " << threads[pid].cpid << " reading "
+                       << await.pid_await.second.read_from << "\n";
+        }
+        read_from = w.iid();
+        assert(w.sym().addr() == await.addr);
+      }
       IID<IPid> iid(pid, await.pid_await.second.index);
       g.add_event(pid, iid, SaturatedGraph::LOAD, await.addr.addr, read_from,
                   happens_after);
@@ -2305,7 +2345,9 @@ static bool prefix_keep_1(std::vector<bool> &acc, std::vector<bool> &del,
                           const RFSCTraceBuilder::TraceOverlay &trace) {
   if (del[i]) return false;
   const auto &e = trace.prefix_at(i);
-  assert(e.decision_depth() != decision || e.modified());
+  /* When pretending awaits are blocked, we might delete the unblocked
+   * event, and then create another, identical, event. */
+  assert(e.decision_depth() != decision || e.modified() || e.deleted());
   if (acc[i]) return !e.modified();
   if (e.deleted() || e.decision_depth() > decision) {
     del[i] = true;
@@ -2461,7 +2503,12 @@ find_process_event(IPid pid, int index) const {
   unsigned res = tb->find_process_event(pid, index);
   assert(prefix_at(res).iid().get_pid() == pid
          && prefix_at(res).iid().get_index() <= index
-         && prefix_at(res).iid().get_index() + prefix_at(res).size() > index);
+         && (prefix_at(res).iid().get_index() + prefix_at(res).size() > index
+             /* prefix_keep might ask for the successor of a modified
+              * event. As a hack, allow it. The right thing to do would
+              * be to use try_find_process_event(), but then we'd need a
+              * maybe_po_prececessor() (or something) */
+             || prefix_at(res).modified() || prefix_at(res).deleted()));
   return res;
 }
 
@@ -2613,5 +2660,7 @@ auto RFSCTraceBuilder::TraceOverlay::prefix_mut(unsigned index)
 
 Option<unsigned> RFSCTraceBuilder::TraceOverlay::po_predecessor(unsigned index)
   const {
-  return tb->po_predecessor(index);
+  const auto &iid = prefix_at(index).iid();
+  if (iid.get_index() == 1) return nullptr;
+  return find_process_event(iid.get_pid(), iid.get_index()-1);
 }
