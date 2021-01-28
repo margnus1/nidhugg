@@ -553,6 +553,8 @@ public:
     struct TraceEvent {
       TraceEvent(const IID<IPid> &iid, SymEv sym = {});
       TraceEvent(const Event &event);
+      TraceEvent(const TraceEvent &) = default;
+      TraceEvent &operator=(const TraceEvent&) = default;
       TraceEvent(TraceEvent &&) = default;
       TraceEvent &operator=(TraceEvent&&) = default;
       DecisionNode *decision_ptr;

@@ -1792,13 +1792,14 @@ void RFSCTraceBuilder::plan(VClock<IPid> horizon) {
         threads[jp].event_indices.push_back(j); // Not needed?
         maybe_add_spawn_happens_after(j);
         compute_above_clock(j);
+        horizon_overlay._prefix_size++;
 
         if (can_swap_by_vclocks(i, j)) {
           if (conf.debug_print_on_reset)
             llvm::dbgs() << "Trying to replace " << pretty_index(i)
                          << " with deadlocked " << pretty_index(j)
                          << ", after " << pretty_index(original_read_from);
-          TraceOverlay ol(this, writes_by_address, {unsigned(i), unsigned(j)});
+          TraceOverlay ol(horizon_overlay, {unsigned(i), unsigned(j)});
           ol.prefix_mut(j).read_from = original_read_from;
           ol.prefix_mut(i).decision_swap(ol.prefix_mut(j));
           assert(!ol.prefix_at(i).pinned());
@@ -2576,7 +2577,7 @@ TraceOverlay(const TraceOverlay &other,
              std::initializer_list<unsigned> preallocate)
   : writes_by_addr(other.writes_by_addr),
     blocking_awaits(other.blocking_awaits), _prefix_size(other._prefix_size),
-    tb(other.tb) {
+    tb(other.tb), prefix_overlay(other.prefix_overlay) {
   prefix_overlay.reserve(prefix_overlay.size() + preallocate.size());
   assert(std::is_sorted(preallocate.begin(), preallocate.end()));
   auto insertion_hint = prefix_overlay.end();
