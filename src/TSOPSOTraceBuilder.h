@@ -149,6 +149,15 @@ public:
     return load(ml.get_ref())
       && atomic_store(ml);
   }
+  virtual NODISCARD bool rmw_await(const SymData &ml, AwaitCond cond) {
+    invalid_input_error("Exchange-await not supported by selected algorithm");
+    return false;
+  }
+  virtual NODISCARD bool rmw_await_fail(const SymData &ml, AwaitCond cond) {
+    invalid_input_error("Exchange-await not supported by selected algorithm");
+    return false;
+  }
+
   /* Perform a compare-exchange to sd.get_ref().
    *
    * success is true iff ml.get_ref() contained the value of expected.
