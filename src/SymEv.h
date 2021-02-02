@@ -41,6 +41,7 @@ struct SymEv {
     FULLMEM, /* Observe & clobber everything */
 
     RMW,
+    RMW_AWAIT,
     CMPXHG,
     CMPXHGFAIL,
 
@@ -86,6 +87,9 @@ struct SymEv {
   }
   static SymEv Store(SymData addr) { return {STORE, std::move(addr)}; }
   static SymEv Rmw(SymData addr) { return {RMW, std::move(addr)}; }
+  static SymEv RmwAwait(SymData addr, AwaitCond cond) {
+      return {RMW_AWAIT, std::move(addr), std::move(cond)};
+  }
   static SymEv CmpXhg(SymData addr, SymData::block_type expected) {
     return {CMPXHG, addr, expected};
   }
@@ -126,7 +130,7 @@ struct SymEv {
   bool has_num() const;
   bool has_data() const;
   bool has_expected() const;
-  bool has_cond() const { return kind == LOAD_AWAIT; };
+  bool has_cond() const { return kind == LOAD_AWAIT || kind == RMW_AWAIT; };
   bool empty() const { return kind == NONE; }
   const SymAddrSize &addr()   const { assert(has_addr()); return arg.addr; }
         int          num()    const { assert(has_num()); return arg.num; }
@@ -154,6 +158,10 @@ private:
   SymEv(enum kind kind, SymData addr_written, SymData::block_type expected)
     : kind(kind), arg(std::move(addr_written.get_ref())),
       _expected(std::move(expected)),
+      _written(std::move(addr_written.get_shared_block())) {};
+  SymEv(enum kind kind, SymData addr_written, AwaitCond cond)
+    : kind(kind), arg(std::move(addr_written.get_ref())), _await_op(cond.op),
+      _expected(std::move(cond.operand)),
       _written(std::move(addr_written.get_shared_block())) {};
 };
 
