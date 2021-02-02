@@ -63,6 +63,8 @@ public:
   virtual NODISCARD bool store(const SymData &ml) override;
   virtual NODISCARD bool atomic_store(const SymData &ml) override;
   virtual NODISCARD bool atomic_rmw(const SymData &ml) override;
+  virtual NODISCARD bool rmw_await(const SymData &ml, AwaitCond cond) override;
+  virtual NODISCARD bool rmw_await_fail(const SymData &ml, AwaitCond cond) override;
   virtual NODISCARD bool compare_exchange
   (const SymData &sd, const SymData::block_type expected, bool success) override;
   virtual NODISCARD bool load(const SymAddrSize &ml) override;
@@ -239,16 +241,20 @@ protected:
 
   /* All currently blocking await statements */
   struct BlockedAwait {
-    BlockedAwait(int index, AwaitCond cond) : cond(std::move(cond)),
-                                              index(index) {}
+    BlockedAwait(int index, AwaitCond cond, bool is_rmw)
+      : cond(std::move(cond)), index(index), is_rmw(is_rmw) {}
     AwaitCond cond;
     std::shared_ptr<DecisionNode> decision_ptr;
+    /* The unfolding event corresponding to this executed event. */
+    std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> event;
     Option<int> planned_read_from;
     Option<unsigned> deleted_unblocked_position_in_prefix;
     /* We don't use an IID as to not duplicate the IPid (used as key) */
     int index;
     int read_from = -1;
     bool pinned = false;
+    bool is_rmw;
+    SymEv sym(SymAddrSize addr) const;
     // enum ReadFrom : int {
     //   RF_UNDEF = -2,
     //   RF_INIT = -1,
@@ -437,6 +443,16 @@ protected:
    * event.
    */
   void do_load(const SymAddrSize &ml);
+  /* For when doing an awaiting operation; look for a matching entry in
+   * blocking_awaits, and if so copy it's metadata to curev() and then
+   * delete it.
+   */
+  void clear_blocking_await(const SymAddrSize &ml);
+  /* Insert the currently detected blocking await operation into
+   * blocking_awaits.
+   */
+  void insert_into_blocking_awaits(const SymAddrSize &ml, AwaitCond cond,
+                                   bool is_rmw);
 
   /* Finds the index in prefix of the event of process pid that has iid-index
    * index.
@@ -487,6 +503,7 @@ protected:
   int compute_above_clock(unsigned event);
   int compute_above_clock(VClock<IPid> &clock, IID<IPid> iid,
                           const std::vector<unsigned> &happens_after) const;
+  VClock<int> compute_blocked_above_clock(IPid p, const BlockedAwait &aw) const;
   void maybe_add_spawn_happens_after(unsigned event);
 
   /* Check whether some event would happen-before a blocked event,
@@ -524,6 +541,9 @@ protected:
   (IPid pid, int index, Option<int> read_from);
   std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> unfold_alternative
   (unsigned i, const std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> &read_from);
+  std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> unfold_alternative
+  (const TraceOverlay &to, unsigned i,
+   const std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> &read_from);
   // END TODO
 
   /* Checks whether an event is included in a vector clock. */
@@ -536,6 +556,8 @@ protected:
    * (if any).
    */
   bool rf_satisfies_cond(int r, int w) const;
+  bool rf_satisfies_cond(const SymAddrSize &addr, const AwaitCond &cond, int w)
+    const;
   static bool rf_satisfies_cond(const TraceOverlay &trace, int r, int w);
   /* Assuming that r and w are RMW, that r immediately preceeds w in
    * coherence order, checks whether swapping r and w is possible
@@ -568,6 +590,7 @@ public:
       TraceEvent(TraceEvent &&) = default;
       TraceEvent &operator=(TraceEvent&&) = default;
       DecisionNode *decision_ptr;
+      const std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> *event;
       std::vector<unsigned> happens_after;
       SymEv sym;
       int size;
@@ -598,6 +621,7 @@ public:
       int decision_depth() const;
       /* Mutable because we need to use the graph cache. */
       DecisionNode *decision_ptr() const;
+      const std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> *uevent() const;
       const SymEv &sym() const;
       Option<int> read_from() const;
       const std::vector<unsigned> &happens_after() const;
@@ -724,6 +748,7 @@ protected:
   bool is_unlock(unsigned idx) const;
   bool is_minit(unsigned idx) const;
   bool is_mdelete(unsigned idx) const;
+  bool is_await(unsigned idx) const; // Any await kind
   SymAddrSize get_addr(unsigned idx) const;
   SymData get_data(int idx, const SymAddrSize &addr) const;
   void recompute_cmpxhg_success(unsigned idx, TraceOverlay &trace) const;

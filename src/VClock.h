@@ -111,6 +111,14 @@ public:
   int operator[](int d) const { assert(d >= 0 && unsigned(d) < _size); return base[d]; };
   int &operator[](int d) { assert(d >= 0 && unsigned(d) < _size); return base[d]; };
 
+  bool includes(const IID<int> &iid) const {
+    return iid.get_index() <= (*this)[iid.get_pid()];
+  };
+
+  bool reverse_includes(const IID<int> &iid) const {
+    return iid.get_index() >= (*this)[iid.get_pid()];
+  };
+
   /* *** Partial order comparisons ***
    *
    * A vector clock u is considered strictly less than a vector clock

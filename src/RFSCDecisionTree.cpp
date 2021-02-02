@@ -214,6 +214,13 @@ bool DecisionNode::try_alloc_unf
   return parent->children_unf_set.insert(unf).second;
 }
 
+std::pair<const RFSCUnfoldingTree::UnfoldingNode*,bool> DecisionNode::try_alloc_unf
+(std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> &&unf) {
+  std::lock_guard<std::mutex> lock(parent->decision_node_mutex);
+  auto ret = parent->children_unf_set.insert(std::move(unf));
+  return std::pair<const RFSCUnfoldingTree::UnfoldingNode*,bool>(ret.first->get(), ret.second);
+}
+
 
 void DecisionNode::alloc_unf(std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> unf) {
   std::lock_guard<std::mutex> lock(parent->decision_node_mutex);

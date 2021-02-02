@@ -98,6 +98,8 @@ public:
    * Returns false if it previously been allocated by this node or any previous
    * sibling. */
   bool try_alloc_unf(const std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> &unf);
+  std::pair<const RFSCUnfoldingTree::UnfoldingNode*,bool>
+       try_alloc_unf(std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> &&unf);
   /* Allocates the given UnfoldingNode, assuming it has not been allocated before */
   void alloc_unf(std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> unf);
 

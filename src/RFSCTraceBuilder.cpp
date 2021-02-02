@@ -193,11 +193,20 @@ bool RFSCTraceBuilder::schedule(int *proc, int *aux, int *alt, bool *dryrun){
 }
 
 void RFSCTraceBuilder::refuse_schedule(){
-  assert(prefix_idx == int(prefix.size())-1);
   assert(curev().size == 1);
   assert(!curev().may_conflict);
   IPid last_pid = curev().iid.get_pid();
-  prefix.pop_back();
+  if (prefix_idx != int(prefix.size())-1) {
+    /* Paper over the fact that we cannot predict the result of an
+       rmw-reversal */
+    llvm::dbgs() << "About to crash. Current state:\n";
+    debug_print();
+    llvm::dbgs() << "CRITICAL: Non-final event " << prefix_idx
+                 << " refused during concrete execution!\n";
+    abort();
+  } else {
+    prefix.pop_back();
+  }
   assert(int(threads[last_pid].event_indices.back()) == prefix_idx);
   threads[last_pid].event_indices.pop_back();
   assert(threads[last_pid].event_indices.empty() ||
@@ -542,6 +551,19 @@ bool RFSCTraceBuilder::atomic_rmw(const SymData &sd){
   return true;
 }
 
+bool RFSCTraceBuilder::rmw_await(const SymData &sd, AwaitCond cond){
+  if (!record_symbolic(SymEv::RmwAwait(sd, std::move(cond)))) return false;
+  clear_blocking_await(sd.get_ref());
+  do_load(sd.get_ref());
+  do_atomic_store(sd);
+  return true;
+}
+
+bool RFSCTraceBuilder::rmw_await_fail(const SymData &sd, AwaitCond cond){
+  insert_into_blocking_awaits(sd.get_ref(), std::move(cond), true);
+  return true;
+}
+
 bool RFSCTraceBuilder::load(const SymAddrSize &ml){
   if (!record_symbolic(SymEv::Load(ml))) return false;
   do_load(ml);
@@ -564,6 +586,13 @@ bool RFSCTraceBuilder::load_await(const SymAddrSize &ml, AwaitCond cond) {
 
   /* We delete the blocking_awaits entry here, because doing so on
    * writes is more complicated and duplicates logic in Interpreter. */
+  clear_blocking_await(ml);
+
+  do_load(ml);
+  return true;
+}
+
+void RFSCTraceBuilder::clear_blocking_await(const SymAddrSize &ml) {
   auto ml_await = blocking_awaits.find(ml);
   if (ml_await != blocking_awaits.end()) {
     IPid current = curev().iid.get_pid();
@@ -588,12 +617,15 @@ bool RFSCTraceBuilder::load_await(const SymAddrSize &ml, AwaitCond cond) {
                      << "\n";
     }
   }
-
-  do_load(ml);
-  return true;
 }
 
 bool RFSCTraceBuilder::load_await_fail(const SymAddrSize &ml, AwaitCond cond) {
+  insert_into_blocking_awaits(ml, std::move(cond), false);
+  return true;
+}
+
+void RFSCTraceBuilder::insert_into_blocking_awaits
+(const SymAddrSize &ml, AwaitCond cond, bool is_rmw) {
   IPid current = curev().iid.get_pid();
   int  index   = curev().iid.get_index();
   auto &ml_awaits = blocking_awaits[ml];
@@ -602,7 +634,7 @@ bool RFSCTraceBuilder::load_await_fail(const SymAddrSize &ml, AwaitCond cond) {
     llvm::dbgs() << "Detecting blocking await by " << threads[current].cpid
                  << "\n";
 
-  auto ret = ml_awaits.try_emplace(current, index, std::move(cond));
+  auto ret = ml_awaits.try_emplace(current, index, std::move(cond), is_rmw);
   /* It can be that we already have am entry in blocking_awaits for this
    * event in the following case: A blocking await is enabled by a
    * store, but before we schedule it, yet another store disables it
@@ -627,7 +659,6 @@ bool RFSCTraceBuilder::load_await_fail(const SymAddrSize &ml, AwaitCond cond) {
     assert(aw.cond.op == cond.op);
     assert(memcmp(aw.cond.operand.get(), cond.operand.get(), ml.size) == 0);
   }
-  return true;
 }
 
 bool RFSCTraceBuilder::compare_exchange
@@ -1056,6 +1087,22 @@ compute_above_clock(TraceOverlay::TraceEventConstRef event) const {
   return clock;
 }
 
+VClock<int> RFSCTraceBuilder::
+compute_blocked_above_clock(IPid p, const BlockedAwait &aw) const {
+  VClock<IPid> clock;
+  std::vector<unsigned> happens_after;
+  assert(aw.index >= 1);
+  /* The first event of a thread happens after the spawn event that
+   * created it. */
+  if (aw.index == 1) {
+    const Thread &t = threads[p];
+    if (t.spawn_event >= 0)
+      happens_after.push_back(t.spawn_event);
+  }
+  compute_above_clock(clock, {p, aw.index}, happens_after);
+  return clock;
+}
+
 void RFSCTraceBuilder::compute_vclocks(){
   Timing::Guard timing_guard(vclocks_context);
 
@@ -1154,6 +1201,25 @@ void RFSCTraceBuilder::compute_unfolding_and_plan() {
     prefix[i].event = unfolding_tree.find_unfolding_node
       (threads[prefix[i].iid.get_pid()].cpid, parent, read_from);
   }
+  /* TODO: Add unfolding events to blocking_awaits here */
+  /* See if any blocking await can be satisfied */
+  for (auto &addr_awaits : blocking_awaits) {
+    for (auto &pid_await : addr_awaits.second) {
+      IPid p = pid_await.first;
+      BlockedAwait &aw = pid_await.second;
+      const std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> &parent
+        = get_unf_parent({p, aw.index});
+      assert(!aw.event);
+
+      /* First, build unfolding nodes as-executed. */
+      const std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> &read_from
+        = get_unf_read_from(aw.read_from);
+
+      aw.event = unfolding_tree.find_unfolding_node
+        (threads[p].cpid, parent, read_from);
+    }
+  }
+  /* XXX: Then, check if we need to update any of them below */
 
   assert(prefix_first_unblock_jump.has_value() == !jumps.empty());
   /* Then, for the first prefix call, substitute unfolding nodes as
@@ -1229,9 +1295,12 @@ void RFSCTraceBuilder::compute_unfolding_and_plan() {
   /* XXX: Before we do this, we really should allocate the decision node
    * for the jump; otherwise, it might be rediscovered and scheduled by
    * jump(), leading to unnecessary redundant execution. */
-  if (conf.debug_print_on_reset && !jumps.empty()) {
+  if (conf.debug_print_on_reset
+      && (!jumps.empty() || !stashed_await_ons.empty())) {
     llvm::dbgs() << "There are some decision jumps ([";
     for (unsigned i : jumps) llvm::dbgs() << i << ",";
+    for (auto a : stashed_await_ons)
+      llvm::dbgs() << threads[std::get<1>(a)].cpid << ",";
     llvm::dbgs() << "]), first we pretend they're not there\n";
   }
   plan(first_plan_horizon, jumps);
@@ -1400,6 +1469,19 @@ RFSCTraceBuilder::unfold_alternative
   return unfolding_tree.find_unfolding_node(threads[p].cpid, parent, read_from);
 }
 
+std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode>
+RFSCTraceBuilder::unfold_alternative
+(const TraceOverlay &trace, unsigned i,
+ const std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> &read_from) {
+  auto e = trace.prefix_at(i);
+  assert(e.uevent());
+  std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> &parent
+    = (*e.uevent())->parent;
+  IPid p = e.iid().get_pid();
+
+  return unfolding_tree.find_unfolding_node(threads[p].cpid, parent, read_from);
+}
+
 bool RFSCTraceBuilder::record_symbolic(SymEv event){
   if (!replay) {
     assert(!seen_effect);
@@ -1431,7 +1513,7 @@ static bool symev_is_lock_type(const SymEv &e) {
 
 static bool symev_is_load(const SymEv &e) {
   return e.kind == SymEv::LOAD || e.kind == SymEv::LOAD_AWAIT
-    || e.kind == SymEv::RMW
+    || e.kind == SymEv::RMW || e.kind == SymEv::RMW_AWAIT
     || e.kind == SymEv::CMPXHG || e.kind == SymEv::CMPXHGFAIL
     || symev_is_lock_type(e);
 }
@@ -1475,7 +1557,8 @@ bool RFSCTraceBuilder::is_lock_type(unsigned i) const {
 
 static bool symev_is_store(const SymEv &e) {
   return e.kind == SymEv::STORE || e.kind == SymEv::CMPXHG
-    || e.kind == SymEv::RMW || symev_is_lock_type(e);
+    || e.kind == SymEv::RMW || e.kind == SymEv::RMW_AWAIT
+    || symev_is_lock_type(e);
 }
 
 static bool is_store(const RFSCTraceBuilder::TraceOverlay &trace, unsigned i) {
@@ -1492,13 +1575,24 @@ bool RFSCTraceBuilder::is_cmpxhgfail(unsigned i) const {
 
 bool RFSCTraceBuilder::is_store_when_reading_from(unsigned i, int read_from) const {
   const SymEv &e = prefix[i].sym;
-  if (e.kind == SymEv::STORE || e.kind == SymEv::RMW || symev_is_lock_type(e))
-    return true;
+  if (e.kind == SymEv::STORE || e.kind == SymEv::RMW || e.kind == SymEv::RMW_AWAIT
+      || symev_is_lock_type(e)) {
+    bool res = rf_satisfies_cond(i, read_from);
+    assert(res || e.kind == SymEv::RMW_AWAIT);
+    return res;
+  }
   if (e.kind != SymEv::CMPXHG && e.kind != SymEv::CMPXHGFAIL) return false;
   SymData expected = e.expected();
   SymData actual = get_data(read_from, e.addr());
   assert(e.addr() == actual.get_ref());
   return memcmp(expected.get_block(), actual.get_block(), e.addr().size) == 0;
+}
+
+bool RFSCTraceBuilder::is_await(unsigned i) const {
+  assert(prefix[i].sym.has_cond() ==
+         (prefix[i].sym.kind == SymEv::LOAD_AWAIT
+          || prefix[i].sym.kind == SymEv::RMW_AWAIT));
+  return prefix[i].sym.has_cond();
 }
 
 static SymAddrSize symev_get_addr(const SymEv &e) {
@@ -1542,6 +1636,11 @@ bool RFSCTraceBuilder::rf_satisfies_cond(const TraceOverlay &trace, int r, int w
 
 bool RFSCTraceBuilder::rf_satisfies_cond(int r, int w) const {
   return rf_satisfies_cond(TraceOverlay(this, {}), r, w);
+}
+
+bool RFSCTraceBuilder::rf_satisfies_cond
+(const SymAddrSize &addr, const AwaitCond &cond, int w) const {
+  return cond.satisfied_by(get_data(w, addr));
 }
 
 static std::ptrdiff_t delete_from_back(gen::vector<int> &vec, int val) {
@@ -1653,25 +1752,35 @@ void RFSCTraceBuilder::plan(VClock<IPid> horizon,
 
   auto pretty_index_t = [this] (const TraceOverlay &trace, int i) -> std::string {
     if (i==-1) return "init event";
-    return std::to_string(trace.prefix_at(i).decision_depth()) // + "("
-      // + std::to_string(trace.prefix_at(i).unf_node()->seqno) + "):"
+    return std::to_string(trace.prefix_at(i).decision_depth()) + "("
+      + std::to_string((*trace.prefix_at(i).uevent())->seqno) + "):"
       + iid_string(trace, i) + trace.prefix_at(i).sym().to_string();
   };
   auto pretty_index = [&] (int i) -> std::string {
     return pretty_index_t(TraceOverlay(this, {}), i);
   };
+  auto pretty_blocked = [&] (const SymAddrSize &sas, IPid p,
+                             const BlockedAwait &aw) -> std::string {
+    return std::to_string(aw.get_decision_depth())
+      + std::to_string(aw.event->seqno) + "):"
+      + iid_string({p, aw}) + aw.sym(sas).to_string();
+  };
 
 
   gen::map<SymAddr,gen::vector<int>> writes_by_address;
   std::map<SymAddr,std::vector<int>> cmpxhgfail_by_address;
+  std::map<SymAddr,std::vector<int>> unblocked_rmwawait_by_address;
   std::vector<std::unordered_map<SymAddr,std::vector<unsigned>>>
     writes_by_process_and_address(threads.size());
   for (unsigned j = 0; j < prefix.size(); ++j) {
     if (horizon.reverse_includes(prefix[j].iid)) continue;
-    if (is_store(j))      writes_by_address.mut(get_addr(j).addr).push_back(j);
-    if (is_store(j))
-      writes_by_process_and_address[prefix[j].iid.get_pid()][get_addr(j).addr]
+    if (is_store(j)) {
+      SymAddr addr = get_addr(j).addr;
+      writes_by_address.mut(addr).push_back(j);
+      writes_by_process_and_address[prefix[j].iid.get_pid()][addr]
         .push_back(j);
+      if (is_await(j)) unblocked_rmwawait_by_address[addr].push_back(j);
+    }
     if (is_cmpxhgfail(j)) cmpxhgfail_by_address[get_addr(j).addr].push_back(j);
   }
   // for (std::pair<SymAddr,std::vector<int>> &pair : writes_by_address) {
@@ -1704,61 +1813,86 @@ void RFSCTraceBuilder::plan(VClock<IPid> horizon,
     SymAddrSize addr = e.sym.addr();
     AwaitCond cond = e.sym.cond();
     auto ret = horizon_overlay.blocking_awaits[addr].try_emplace
-      (e.iid.get_pid(), e.iid.get_index(), cond);
+      (e.iid.get_pid(), e.iid.get_index(), cond, is_store(i));
     assert(ret.second);
     BlockedAwait &aw = ret.first->second;
     assert(e.decision_ptr == prefix[i].decision_ptr.get());
     aw.decision_ptr = prefix[i].decision_ptr;
     aw.read_from = *e.read_from;
     aw.deleted_unblocked_position_in_prefix = i;
+    aw.event = *e.event;
   }
 
   /* See if any blocking await can be satisfied */
   for (auto &addr_awaits : horizon_overlay.blocking_awaits) {
     const SymAddrSize &addr = addr_awaits.first;
     for (auto &pid_cond : addr_awaits.second) {
-      TraceOverlay ol(horizon_overlay);
+      // TraceOverlay ol(horizon_overlay);
       IPid pid = pid_cond.first;
       const BlockedAwait &aw = pid_cond.second;
       const AwaitCond &cond = aw.cond;
+      std::shared_ptr<DecisionNode> &decision = pid_cond.second.decision_ptr;
       assert(unsigned(prefix_idx) == prefix.size());
       auto iidx = pid_cond.second.index;
-      unsigned i = aw.deleted_unblocked_position_in_prefix.value_or(prefix_idx);
-      TraceOverlay::TraceEvent *ep;
-      if (aw.deleted_unblocked_position_in_prefix) {
-        ep = &ol.prefix_mut(i);
-        ep->deleted = false;
-        ep->modified = true;
-        ep->size = 1;
-        assert(!ep->pinned);
-        assert(ep->iid == IID<IPid>(pid, iidx));
-        assert(ep->sym == SymEv::LoadAwait(addr, cond));
-      } else {
-        ep = &ol.prefix_emplace_back(IID<IPid>(pid, iidx),
-                                     SymEv::LoadAwait(addr, cond));
-      }
-      auto &e = *ep;
-      maybe_add_spawn_happens_after(e);
-      ol.blocking_awaits[addr].erase(pid);
+      auto unblock = [&](TraceOverlay &ol)
+        -> std::pair<unsigned,TraceOverlay::TraceEvent&> {
+        unsigned i = aw.deleted_unblocked_position_in_prefix.value_or(prefix_idx);
+        TraceOverlay::TraceEvent *ep;
+        if (aw.deleted_unblocked_position_in_prefix) {
+          ep = &ol.prefix_mut(i);
+          ep->deleted = false;
+          ep->modified = true;
+          ep->size = 1;
+          assert(!ep->pinned);
+          assert(ep->iid == IID<IPid>(pid, iidx));
+          assert(ep->sym == aw.sym(addr));
+          assert(ep->event && *ep->event == aw.event);
+        } else {
+          ep = &ol.prefix_emplace_back(IID<IPid>(pid, iidx), aw.sym(addr));
+          ep->event = &aw.event;
+        }
+        auto &e = *ep;
+        maybe_add_spawn_happens_after(e);
+        ol.blocking_awaits[addr].erase(pid);
+        e.decision_ptr = decision.get();
+        return std::make_pair(i, std::ref(e));
+      };
 
-      const std::shared_ptr<DecisionNode> &decision = pid_cond.second.decision_ptr;
-      e.decision_ptr = decision.get();
-
+      /* This code duplicates some of the logic for non-blocked awaits
+       * below; can we merge the cases? */
       auto try_read_from = [&](int j) {
           assert(1);
-          if (!rf_satisfies_cond(ol, i, j)) return;
           const std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> &alt
             = j == -1 ? nullptr : prefix[j].event;
           assert(decision);
           /* XXX: Inefficiency: we could transfer reference ownership into here */
           if (!decision->try_alloc_unf(alt)) return;
 
-          if (conf.debug_print_on_reset)
-            llvm::dbgs() << "Trying to satisfy deadlocked " << pretty_index_t(ol, i)
-                         << " reading from " << pretty_index_t(ol, j);
-          e.read_from = j;
+          TraceOverlay ol(horizon_overlay);
+          last_change_ty last_change;
+          if (rf_satisfies_cond(addr, cond, j)){
+            auto ret = unblock(ol);
+            unsigned i = ret.first;
+            TraceOverlay::TraceEvent &e = ret.second;
+            if (conf.debug_print_on_reset)
+              llvm::dbgs() << "Trying to satisfy blocked " << pretty_index_t(ol, i)
+                           << " reading from " << pretty_index(j)
+                           << " instead of " << pretty_index(e.read_from);
+            e.read_from = j;
 
-          Leaf solution = try_sat(i, ol);
+            last_change = i;
+          } else {
+            if (conf.debug_print_on_reset)
+              llvm::dbgs() << "Trying to make blocked "
+                           << pretty_blocked(addr, pid, aw)
+                           << " read from " << pretty_index(j)
+                           << " instead of " << pretty_index(aw.read_from);
+            auto &aw = ol.blocking_awaits[addr].at(pid);
+            aw.read_from = j;
+
+            last_change = BlockedChange{addr, pid};
+          }
+          Leaf solution = try_sat(last_change, ol);
           if (solution.is_bottom()) return;
 
           /* We can satisfy this await. Commit to the decision node we
@@ -1768,8 +1902,56 @@ void RFSCTraceBuilder::plan(VClock<IPid> horizon,
                                           std::move(solution));
           tasks_created++;
         };
+      auto try_swap = [&](int j) {
+        /* We're actually inserting an alternative to j's decision node,
+         * not i's */
+        int original_read_from = *prefix[j].read_from;
+        if (!rf_satisfies_cond(addr, cond, original_read_from)) return;
+        bool j_decides = aw.get_decision_depth() > prefix[j].get_decision_depth();
+        if (j_decides && prefix[j].pinned) return;
+        assert(decision);
+        TraceOverlay ol(horizon_overlay, {unsigned(j)});
+        unsigned i = unblock(ol).first;
+        assert((original_read_from == -1 && !prefix[j].event->read_from)
+               || prefix[j].event->read_from == prefix[original_read_from].event);
+        RFSCUnfoldingTree::UnfoldingNode *read_from_p;
+        DecisionNode *decision;
+        if (j_decides) {
+          std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> read_from
+            = unfold_alternative(ol, i, prefix[j].event->read_from);
+          read_from_p = read_from.get();
+          decision = prefix[j].decision_ptr.get();
+          if (!decision->try_alloc_unf(std::move(read_from)).second)
+            return;
+        } else {
+          const std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> &read_from
+            = prefix[j].event->read_from;
+          read_from_p = read_from.get();
+          decision = aw.decision_ptr.get();
+          if (!decision->try_alloc_unf(read_from))
+            return;
+        }
+        if (!can_swap_by_vclocks(i, j)) {
+          assert(false && "TODO: Is this an issue?");
+          return;
+        }
+        if (conf.debug_print_on_reset)
+          llvm::dbgs() << "Trying to swap " << pretty_index_t(ol, j)
+                       << " with blocked " << pretty_index_t(ol, i)
+                       << ", reading from " << pretty_index_t(ol, original_read_from);
+        ol.prefix_mut(i).read_from = original_read_from;
+        ol.prefix_mut(j).read_from = i;
+        recompute_cmpxhg_success(j, ol);
 
-      const VClock<IPid> above = compute_above_clock(e);
+        Leaf solution = try_sat(j_decides ? j : i, ol);
+        if (!solution.is_bottom()) {
+          decision_tree.construct_sibling(*decision, read_from_p,
+                                          std::move(solution));
+          tasks_created++;
+        }
+      };
+
+      const VClock<IPid> above = compute_blocked_above_clock(pid, aw);
 
       try_read_from(-1);
       for (unsigned p = 0; p < threads.size(); ++p) {
@@ -1782,6 +1964,13 @@ void RFSCTraceBuilder::plan(VClock<IPid> horizon,
         if (start != writes.begin()) --start;
         for (auto it = start; it != writes.end(); ++it) {
           try_read_from(*it);
+        }
+        if (aw.is_rmw) {
+          for (auto it = start; it != writes.end(); ++it) {
+            if (is_load(*it)) {
+              try_swap(*it);
+            }
+          }
         }
       }
 
@@ -1928,10 +2117,15 @@ void RFSCTraceBuilder::plan(VClock<IPid> horizon,
         Timing::Guard analysis_timing_guard(try_read_from_context);
         assert(j != -1 && j > int(i) && is_store(i) && is_load(j)
                && is_store_when_reading_from(j, original_read_from));
-        /* Can only swap ajacent RMWs */
-        if (*prefix[j].read_from != int(i)) return;
+        // assert(rf_satisfies_cond(i, j)); // We don't correctly
+                                            // predict it anyway.
+        assert(rf_satisfies_cond(j, original_read_from));
+        /* Can only swap ajacent RMWs, unless the former is an await. */
+        if (*prefix[j].read_from != int(i) && !is_await(j)) return;
         std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> read_from
           = unfold_alternative(j, prefix[i].event->read_from);
+        // XXX: Are we really doing the right thing when this is the case?
+        // assert(prefix[j].get_decision_depth() > prefix[i].get_decision_depth());
         if (!decision.try_alloc_unf(read_from)) return;
         if (!can_swap_by_vclocks(i, j)) return;
         if (conf.debug_print_on_reset)
@@ -1976,7 +2170,7 @@ void RFSCTraceBuilder::plan(VClock<IPid> horizon,
             const IID<IPid> iid = prefix[i].iid;
             auto ret =
               ol.blocking_awaits[addr].try_emplace
-              (iid.get_pid(), iid.get_index(), prefix[i].sym.cond());
+              (iid.get_pid(), iid.get_index(), prefix[i].sym.cond(), is_store(i));
             assert(ret.second);
             ret.first->second.read_from = j;
             ret.first->second.decision_ptr = prefix[i].decision_ptr;
@@ -2029,6 +2223,11 @@ void RFSCTraceBuilder::plan(VClock<IPid> horizon,
       if (is_store(i)) {
         for (int j : cmpxhgfail_by_address[addr.addr]) {
           if (j > int(i) && is_store_when_reading_from(j, original_read_from)) {
+            try_read_from_rmw(j);
+          }
+        }
+        for (unsigned j : unblocked_rmwawait_by_address[addr.addr]) {
+          if (j > i && is_store_when_reading_from(j, original_read_from)) {
             try_read_from_rmw(j);
           }
         }
@@ -2568,15 +2767,20 @@ try_find_process_event(IPid pid, int index) const {
   return res;
 }
 
+SymEv RFSCTraceBuilder::BlockedAwait::sym(SymAddrSize addr) const {
+  return is_rmw ? SymEv::RmwAwait(SymData(addr, nullptr), cond)
+    : SymEv::LoadAwait(addr, cond);
+}
+
 RFSCTraceBuilder::TraceOverlay::TraceEvent::TraceEvent(const Event &e)
-  : decision_ptr(e.decision_ptr.get()), happens_after(e.happens_after),
-    sym(e.sym), size(e.size), iid(e.iid), read_from(e.read_from),
-    pinned(e.pinned), modified(false), underlying(&e) {}
+  : decision_ptr(e.decision_ptr.get()), event(&e.event),
+    happens_after(e.happens_after), sym(e.sym), size(e.size), iid(e.iid),
+    read_from(e.read_from), pinned(e.pinned), modified(false), underlying(&e) {}
 
 RFSCTraceBuilder::TraceOverlay::TraceEvent::
 TraceEvent(const IID<int> &iid, SymEv sym)
-  : decision_ptr(nullptr), sym(std::move(sym)), size(1), iid(iid),
-    pinned(false), modified(true) {}
+  : decision_ptr(nullptr), event(nullptr), sym(std::move(sym)), size(1),
+    iid(iid), pinned(false), modified(true) {}
 
 void RFSCTraceBuilder::TraceOverlay::TraceEvent::add_happens_after(unsigned event){
   assert(event != ~0u);
@@ -2612,6 +2816,10 @@ int RFSCTraceBuilder::TraceOverlay::TraceEventConstRef::decision_depth() const {
 DecisionNode *RFSCTraceBuilder::TraceOverlay::TraceEventConstRef::decision_ptr()
   const {
   return overlay ? overlay->decision_ptr : event->decision_ptr.get();
+}
+const std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> *
+RFSCTraceBuilder::TraceOverlay::TraceEventConstRef::uevent() const {
+  return overlay ? overlay->event : &event->event;
 }
 const SymEv &RFSCTraceBuilder::TraceOverlay::TraceEventConstRef::sym() const {
   return overlay ? overlay->sym : event->sym;
