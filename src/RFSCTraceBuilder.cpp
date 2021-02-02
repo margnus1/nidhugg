@@ -1385,6 +1385,13 @@ void RFSCTraceBuilder::compute_unfolding_and_plan() {
         was_redundant = true;
         return;
       } else {
+        llvm::dbgs() << "About to crash. Current state:\n";
+        debug_print();
+        llvm::dbgs() << "CRITICAL: First unblock "
+                     << (first_jump_is_await ? iid_string(*await_jump)
+                         : iid_string(*prefix_first_unblock_jump))
+                     << " was not detected by first plan() call.\n";
+        abort();
         /* Ugly, but we can't use construct_sibling() since it adds the
          * new node to the scheduler queue (!) */
         *node = (*node)->make_sibling(decision.get(), Leaf());
@@ -1902,48 +1909,46 @@ void RFSCTraceBuilder::plan(VClock<IPid> horizon,
                                           std::move(solution));
           tasks_created++;
         };
-      auto try_swap = [&](int j) {
-        /* We're actually inserting an alternative to j's decision node,
-         * not i's */
-        int original_read_from = *prefix[j].read_from;
+      auto try_swap = [&](int i) {
+        /* We're in the opposite case of try_read_from_rmw; i.e. the
+           await is j, and comes after i */
+        int original_read_from = *prefix[i].read_from;
         if (!rf_satisfies_cond(addr, cond, original_read_from)) return;
-        bool j_decides = aw.get_decision_depth() > prefix[j].get_decision_depth();
-        if (j_decides && prefix[j].pinned) return;
+        bool i_decides = aw.get_decision_depth() > prefix[i].get_decision_depth();
+        if (i_decides && prefix[i].pinned) return;
         assert(decision);
-        TraceOverlay ol(horizon_overlay, {unsigned(j)});
-        unsigned i = unblock(ol).first;
-        assert((original_read_from == -1 && !prefix[j].event->read_from)
-               || prefix[j].event->read_from == prefix[original_read_from].event);
+        TraceOverlay ol(horizon_overlay, {unsigned(i)});
+        unsigned j = unblock(ol).first;
+        assert((original_read_from == -1 && !prefix[i].event->read_from)
+               || prefix[i].event->read_from == prefix[original_read_from].event);
         RFSCUnfoldingTree::UnfoldingNode *read_from_p;
         DecisionNode *decision;
-        if (j_decides) {
+        if (i_decides) {
           std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> read_from
-            = unfold_alternative(ol, i, prefix[j].event->read_from);
+            = unfold_alternative(ol, j, prefix[i].event->read_from);
           read_from_p = read_from.get();
-          decision = prefix[j].decision_ptr.get();
+          decision = prefix[i].decision_ptr.get();
           if (!decision->try_alloc_unf(std::move(read_from)).second)
             return;
         } else {
           const std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> &read_from
-            = prefix[j].event->read_from;
+            = prefix[i].event->read_from;
           read_from_p = read_from.get();
           decision = aw.decision_ptr.get();
           if (!decision->try_alloc_unf(read_from))
             return;
         }
-        if (!can_swap_by_vclocks(i, j)) {
-          assert(false && "TODO: Is this an issue?");
-          return;
-        }
+        // Cannot happen, as j may not happen-before i
+        // if (!can_swap_by_vclocks(j, i)) return;
         if (conf.debug_print_on_reset)
-          llvm::dbgs() << "Trying to swap " << pretty_index_t(ol, j)
-                       << " with blocked " << pretty_index_t(ol, i)
+          llvm::dbgs() << "Trying to swap " << pretty_index_t(ol, i)
+                       << " with blocked " << pretty_index_t(ol, j)
                        << ", reading from " << pretty_index_t(ol, original_read_from);
-        ol.prefix_mut(i).read_from = original_read_from;
-        ol.prefix_mut(j).read_from = i;
-        recompute_cmpxhg_success(j, ol);
+        ol.prefix_mut(j).read_from = original_read_from;
+        ol.prefix_mut(i).read_from = j;
+        recompute_cmpxhg_success(i, ol);
 
-        Leaf solution = try_sat(j_decides ? j : i, ol);
+        Leaf solution = try_sat(i_decides ? i : j, ol);
         if (!solution.is_bottom()) {
           decision_tree.construct_sibling(*decision, read_from_p,
                                           std::move(solution));
