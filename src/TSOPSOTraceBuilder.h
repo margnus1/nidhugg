@@ -149,11 +149,11 @@ public:
     return load(ml.get_ref())
       && atomic_store(ml);
   }
-  virtual NODISCARD bool rmw_await(const SymData &ml, AwaitCond cond) {
+  virtual NODISCARD bool xchg_await(const SymData &ml, AwaitCond cond) {
     invalid_input_error("Exchange-await not supported by selected algorithm");
     return false;
   }
-  virtual NODISCARD bool rmw_await_fail(const SymData &ml, AwaitCond cond) {
+  virtual NODISCARD bool xchg_await_fail(const SymData &ml, AwaitCond cond) {
     invalid_input_error("Exchange-await not supported by selected algorithm");
     return false;
   }

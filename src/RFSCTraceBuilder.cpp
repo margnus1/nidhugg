@@ -551,15 +551,15 @@ bool RFSCTraceBuilder::atomic_rmw(const SymData &sd){
   return true;
 }
 
-bool RFSCTraceBuilder::rmw_await(const SymData &sd, AwaitCond cond){
-  if (!record_symbolic(SymEv::RmwAwait(sd, std::move(cond)))) return false;
+bool RFSCTraceBuilder::xchg_await(const SymData &sd, AwaitCond cond){
+  if (!record_symbolic(SymEv::XchgAwait(sd, std::move(cond)))) return false;
   clear_blocking_await(sd.get_ref());
   do_load(sd.get_ref());
   do_atomic_store(sd);
   return true;
 }
 
-bool RFSCTraceBuilder::rmw_await_fail(const SymData &sd, AwaitCond cond){
+bool RFSCTraceBuilder::xchg_await_fail(const SymData &sd, AwaitCond cond){
   insert_into_blocking_awaits(sd.get_ref(), std::move(cond), true);
   return true;
 }
@@ -625,7 +625,7 @@ bool RFSCTraceBuilder::load_await_fail(const SymAddrSize &ml, AwaitCond cond) {
 }
 
 void RFSCTraceBuilder::insert_into_blocking_awaits
-(const SymAddrSize &ml, AwaitCond cond, bool is_rmw) {
+(const SymAddrSize &ml, AwaitCond cond, bool is_xchg) {
   IPid current = curev().iid.get_pid();
   int  index   = curev().iid.get_index();
   auto &ml_awaits = blocking_awaits[ml];
@@ -634,7 +634,7 @@ void RFSCTraceBuilder::insert_into_blocking_awaits
     llvm::dbgs() << "Detecting blocking await by " << threads[current].cpid
                  << "\n";
 
-  auto ret = ml_awaits.try_emplace(current, index, std::move(cond), is_rmw);
+  auto ret = ml_awaits.try_emplace(current, index, std::move(cond), is_xchg);
   /* It can be that we already have am entry in blocking_awaits for this
    * event in the following case: A blocking await is enabled by a
    * store, but before we schedule it, yet another store disables it
@@ -1520,7 +1520,7 @@ static bool symev_is_lock_type(const SymEv &e) {
 
 static bool symev_is_load(const SymEv &e) {
   return e.kind == SymEv::LOAD || e.kind == SymEv::LOAD_AWAIT
-    || e.kind == SymEv::RMW || e.kind == SymEv::RMW_AWAIT
+    || e.kind == SymEv::RMW || e.kind == SymEv::XCHG_AWAIT
     || e.kind == SymEv::CMPXHG || e.kind == SymEv::CMPXHGFAIL
     || symev_is_lock_type(e);
 }
@@ -1564,7 +1564,7 @@ bool RFSCTraceBuilder::is_lock_type(unsigned i) const {
 
 static bool symev_is_store(const SymEv &e) {
   return e.kind == SymEv::STORE || e.kind == SymEv::CMPXHG
-    || e.kind == SymEv::RMW || e.kind == SymEv::RMW_AWAIT
+    || e.kind == SymEv::RMW || e.kind == SymEv::XCHG_AWAIT
     || symev_is_lock_type(e);
 }
 
@@ -1582,10 +1582,10 @@ bool RFSCTraceBuilder::is_cmpxhgfail(unsigned i) const {
 
 bool RFSCTraceBuilder::is_store_when_reading_from(unsigned i, int read_from) const {
   const SymEv &e = prefix[i].sym;
-  if (e.kind == SymEv::STORE || e.kind == SymEv::RMW || e.kind == SymEv::RMW_AWAIT
+  if (e.kind == SymEv::STORE || e.kind == SymEv::RMW || e.kind == SymEv::XCHG_AWAIT
       || symev_is_lock_type(e)) {
     bool res = rf_satisfies_cond(i, read_from);
-    assert(res || e.kind == SymEv::RMW_AWAIT);
+    assert(res || e.kind == SymEv::XCHG_AWAIT);
     return res;
   }
   if (e.kind != SymEv::CMPXHG && e.kind != SymEv::CMPXHGFAIL) return false;
@@ -1598,7 +1598,7 @@ bool RFSCTraceBuilder::is_store_when_reading_from(unsigned i, int read_from) con
 bool RFSCTraceBuilder::is_await(unsigned i) const {
   assert(prefix[i].sym.has_cond() ==
          (prefix[i].sym.kind == SymEv::LOAD_AWAIT
-          || prefix[i].sym.kind == SymEv::RMW_AWAIT));
+          || prefix[i].sym.kind == SymEv::XCHG_AWAIT));
   return prefix[i].sym.has_cond();
 }
 
@@ -1776,7 +1776,7 @@ void RFSCTraceBuilder::plan(VClock<IPid> horizon,
 
   gen::map<SymAddr,gen::vector<int>> writes_by_address;
   std::map<SymAddr,std::vector<int>> cmpxhgfail_by_address;
-  std::map<SymAddr,std::vector<int>> unblocked_rmwawait_by_address;
+  std::map<SymAddr,std::vector<int>> unblocked_xchgawait_by_address;
   std::vector<std::unordered_map<SymAddr,std::vector<unsigned>>>
     writes_by_process_and_address(threads.size());
   for (unsigned j = 0; j < prefix.size(); ++j) {
@@ -1786,7 +1786,7 @@ void RFSCTraceBuilder::plan(VClock<IPid> horizon,
       writes_by_address.mut(addr).push_back(j);
       writes_by_process_and_address[prefix[j].iid.get_pid()][addr]
         .push_back(j);
-      if (is_await(j)) unblocked_rmwawait_by_address[addr].push_back(j);
+      if (is_await(j)) unblocked_xchgawait_by_address[addr].push_back(j);
     }
     if (is_cmpxhgfail(j)) cmpxhgfail_by_address[get_addr(j).addr].push_back(j);
   }
@@ -1970,7 +1970,7 @@ void RFSCTraceBuilder::plan(VClock<IPid> horizon,
         for (auto it = start; it != writes.end(); ++it) {
           try_read_from(*it);
         }
-        if (aw.is_rmw) {
+        if (aw.is_xchg) {
           for (auto it = start; it != writes.end(); ++it) {
             if (is_load(*it)) {
               try_swap(*it);
@@ -2231,7 +2231,7 @@ void RFSCTraceBuilder::plan(VClock<IPid> horizon,
             try_read_from_rmw(j);
           }
         }
-        for (unsigned j : unblocked_rmwawait_by_address[addr.addr]) {
+        for (unsigned j : unblocked_xchgawait_by_address[addr.addr]) {
           if (j > i && is_store_when_reading_from(j, original_read_from)) {
             try_read_from_rmw(j);
           }
@@ -2773,7 +2773,7 @@ try_find_process_event(IPid pid, int index) const {
 }
 
 SymEv RFSCTraceBuilder::BlockedAwait::sym(SymAddrSize addr) const {
-  return is_rmw ? SymEv::RmwAwait(SymData(addr, nullptr), cond)
+  return is_xchg ? SymEv::XchgAwait(SymData(addr, nullptr), cond)
     : SymEv::LoadAwait(addr, cond);
 }
 

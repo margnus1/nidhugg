@@ -63,8 +63,8 @@ public:
   virtual NODISCARD bool store(const SymData &ml) override;
   virtual NODISCARD bool atomic_store(const SymData &ml) override;
   virtual NODISCARD bool atomic_rmw(const SymData &ml) override;
-  virtual NODISCARD bool rmw_await(const SymData &ml, AwaitCond cond) override;
-  virtual NODISCARD bool rmw_await_fail(const SymData &ml, AwaitCond cond) override;
+  virtual NODISCARD bool xchg_await(const SymData &ml, AwaitCond cond) override;
+  virtual NODISCARD bool xchg_await_fail(const SymData &ml, AwaitCond cond) override;
   virtual NODISCARD bool compare_exchange
   (const SymData &sd, const SymData::block_type expected, bool success) override;
   virtual NODISCARD bool load(const SymAddrSize &ml) override;
@@ -241,8 +241,8 @@ protected:
 
   /* All currently blocking await statements */
   struct BlockedAwait {
-    BlockedAwait(int index, AwaitCond cond, bool is_rmw)
-      : cond(std::move(cond)), index(index), is_rmw(is_rmw) {}
+    BlockedAwait(int index, AwaitCond cond, bool is_xchg)
+      : cond(std::move(cond)), index(index), is_xchg(is_xchg) {}
     AwaitCond cond;
     std::shared_ptr<DecisionNode> decision_ptr;
     /* The unfolding event corresponding to this executed event. */
@@ -253,7 +253,7 @@ protected:
     int index;
     int read_from = -1;
     bool pinned = false;
-    bool is_rmw;
+    bool is_xchg;
     SymEv sym(SymAddrSize addr) const;
     // enum ReadFrom : int {
     //   RF_UNDEF = -2,
@@ -452,7 +452,7 @@ protected:
    * blocking_awaits.
    */
   void insert_into_blocking_awaits(const SymAddrSize &ml, AwaitCond cond,
-                                   bool is_rmw);
+                                   bool is_xchg);
 
   /* Finds the index in prefix of the event of process pid that has iid-index
    * index.

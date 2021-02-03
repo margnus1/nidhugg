@@ -3096,7 +3096,7 @@ void Interpreter::callLoadAwait(Function *F,
 
   SymData sd = GetSymData(*Ptr_sas,Ty,NewVal);
 
-  if(!TB.rmw_await(sd, std::move(cond))){
+  if(!TB.xchg_await(sd, std::move(cond))){
     abort();
     return;
   }
@@ -3451,7 +3451,7 @@ bool Interpreter::checkRefuse(Instruction &I){
             ExecutionContext &SF = ECStack()->back();
             GenericValue Val = getOperandValue(I.getOperand(1), SF);
             SymData sd = GetSymData(*ptr_sas,I.getOperand(1)->getType(),Val);
-            callback_ret = TB.rmw_await_fail(sd, cond);
+            callback_ret = TB.xchg_await_fail(sd, cond);
           }
           if(!callback_ret) {
             abort();

@@ -29,7 +29,7 @@ bool SymEv::is_compatible_with(SymEv other) const {
       && !(kind == M_TRYLOCK_FAIL && other.kind == M_TRYLOCK))
     return false;
   switch(kind) {
-  case LOAD_AWAIT: case RMW_AWAIT:
+  case LOAD_AWAIT: case XCHG_AWAIT:
     if (_await_op != other._await_op) return false;
     if (memcmp(_expected.get(), other._expected.get(), arg.addr.size) != 0)
       return false;
@@ -110,7 +110,7 @@ std::string SymEv::to_string(std::function<std::string(int)> pid_str) const {
 
     case RMW: return "Rmw(" + arg.addr.to_string(pid_str)
         + "," + block_to_string(_written, arg.addr.size) + ")";
-    case RMW_AWAIT: return "RmwAwait(" + arg.addr.to_string(pid_str)
+    case XCHG_AWAIT: return "RmwAwait(" + arg.addr.to_string(pid_str)
         + "," + block_to_string(_written, arg.addr.size) + ", "
         + AwaitCond::name(_await_op) + " "
         + block_to_string(_expected, arg.addr.size)+ ")";
@@ -134,7 +134,7 @@ bool SymEv::has_addr() const {
   case C_INIT: case C_SIGNAL: case C_BRDCST: case C_DELETE:
   case C_WAIT: case C_AWAKE:
   case UNOBS_STORE:
-  case RMW: case RMW_AWAIT: case CMPXHG: case CMPXHGFAIL:
+  case RMW: case XCHG_AWAIT: case CMPXHG: case CMPXHGFAIL:
     return true;
   case NONE:
   case FULLMEM: case NONDET:
@@ -157,7 +157,7 @@ bool SymEv::has_num() const {
   case M_TRYLOCK: case M_TRYLOCK_FAIL:
   case C_INIT: case C_SIGNAL: case C_BRDCST: case C_DELETE:
   case UNOBS_STORE:
-  case RMW: case RMW_AWAIT: case CMPXHG: case CMPXHGFAIL:
+  case RMW: case XCHG_AWAIT: case CMPXHG: case CMPXHGFAIL:
     return false;
   }
   abort();
@@ -166,7 +166,7 @@ bool SymEv::has_num() const {
 bool SymEv::has_data() const {
   switch(kind) {
   case STORE: case UNOBS_STORE:
-  case RMW: case RMW_AWAIT: case CMPXHG: case CMPXHGFAIL:
+  case RMW: case XCHG_AWAIT: case CMPXHG: case CMPXHGFAIL:
     return (bool)_written;
   case NONE:
   case SPAWN: case JOIN:
@@ -196,7 +196,7 @@ bool SymEv::has_expected() const {
   case M_INIT: case M_LOCK: case M_UNLOCK: case M_DELETE:
   case M_TRYLOCK: case M_TRYLOCK_FAIL:
   case C_INIT: case C_SIGNAL: case C_BRDCST: case C_DELETE:
-  case RMW: case RMW_AWAIT:
+  case RMW: case XCHG_AWAIT:
     return false;
   }
   abort();

@@ -41,7 +41,7 @@ struct SymEv {
     FULLMEM, /* Observe & clobber everything */
 
     RMW,
-    RMW_AWAIT,
+    XCHG_AWAIT,
     CMPXHG,
     CMPXHGFAIL,
 
@@ -87,8 +87,8 @@ struct SymEv {
   }
   static SymEv Store(SymData addr) { return {STORE, std::move(addr)}; }
   static SymEv Rmw(SymData addr) { return {RMW, std::move(addr)}; }
-  static SymEv RmwAwait(SymData addr, AwaitCond cond) {
-      return {RMW_AWAIT, std::move(addr), std::move(cond)};
+  static SymEv XchgAwait(SymData addr, AwaitCond cond) {
+      return {XCHG_AWAIT, std::move(addr), std::move(cond)};
   }
   static SymEv CmpXhg(SymData addr, SymData::block_type expected) {
     return {CMPXHG, addr, expected};
@@ -130,7 +130,7 @@ struct SymEv {
   bool has_num() const;
   bool has_data() const;
   bool has_expected() const;
-  bool has_cond() const { return kind == LOAD_AWAIT || kind == RMW_AWAIT; };
+  bool has_cond() const { return kind == LOAD_AWAIT || kind == XCHG_AWAIT; };
   bool empty() const { return kind == NONE; }
   const SymAddrSize &addr()   const { assert(has_addr()); return arg.addr; }
         int          num()    const { assert(has_num()); return arg.num; }
