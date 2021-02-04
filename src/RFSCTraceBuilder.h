@@ -241,8 +241,11 @@ protected:
 
   /* All currently blocking await statements */
   struct BlockedAwait {
-    BlockedAwait(int index, AwaitCond cond, bool is_xchg)
-      : cond(std::move(cond)), index(index), is_xchg(is_xchg) {}
+    BlockedAwait(int index, SymEv ev)
+      : cond(ev.cond()), index(index),
+        _is_xchg(ev.kind == SymEv::XCHG_AWAIT),
+        _written(_is_xchg ? std::move(std::move(ev).data().get_shared_block())
+                 : nullptr) {}
     AwaitCond cond;
     std::shared_ptr<DecisionNode> decision_ptr;
     /* The unfolding event corresponding to this executed event. */
@@ -253,7 +256,7 @@ protected:
     int index;
     int read_from = -1;
     bool pinned = false;
-    bool is_xchg;
+    bool is_xchg() const { return _is_xchg; }
     SymEv sym(SymAddrSize addr) const;
     // enum ReadFrom : int {
     //   RF_UNDEF = -2,
@@ -262,6 +265,9 @@ protected:
     int get_decision_depth() const {
       return decision_ptr ? decision_ptr->depth : -1;
     }
+  private:
+    bool _is_xchg = false;
+    SymData::block_type _written;
   };
   /* XXX: Should we use gen::map instead for constant-time copies into
    * TraceOverlay? */
@@ -750,7 +756,8 @@ protected:
   bool is_await(unsigned idx) const; // Any await kind
   SymAddrSize get_addr(unsigned idx) const;
   SymData get_data(int idx, const SymAddrSize &addr) const;
-  void recompute_cmpxhg_success(unsigned idx, TraceOverlay &trace) const;
+  last_change_ty recompute_rmw(unsigned idx, TraceOverlay &trace) const;
+  last_change_ty block_await(unsigned idx, TraceOverlay &trace) const;
 };
 
 #endif

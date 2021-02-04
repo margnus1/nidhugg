@@ -60,5 +60,15 @@ revealed_write Forbid : 2
 revealed_write_reverse Forbid : 2
 parker_reproc_1 Forbid : 5
 dekker_lock_trylock Forbid : 4
+xchgawait_vs_inc_chain Forbid : 3
+xchgawait_vs_inc_chain_2 Forbid : 3
+xchgawait_vs_inc_chain_reverse Forbid : 3
+xchgawait_vs_inc_chain_reverse_blocked Forbid : 3
+xchgawait_test1 Forbid : 1
+xchgawait_test2 Forbid : 223
+xchgawait_test3 Forbid : 5
+xchgawait_test4 Forbid : 4
+await_mud Forbid : 3
+await_muddier Forbid : 4
 # Total number of traces: 1116
 # Total running time: 9.51 s
