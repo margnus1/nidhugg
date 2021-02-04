@@ -145,7 +145,7 @@ public:
    *
    * Returns true on success, false if an error has been generated.
    */
-  virtual NODISCARD bool atomic_rmw(const SymData &ml) {
+  virtual NODISCARD bool atomic_rmw(const SymData &ml, RmwAction action) {
     return load(ml.get_ref())
       && atomic_store(ml);
   }

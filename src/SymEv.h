@@ -1,4 +1,4 @@
-/* Copyright (C) 2017 Magnus Lång
+/* Copyright (C) 2021 Magnus Lång
  *
  * This file is part of Nidhugg.
  *
@@ -74,7 +74,15 @@ struct SymEv {
     arg(int num) : num(num) {}
     // ~arg_union() {}
   } arg;
-  AwaitCond::Op _await_op;
+  union arg2 {
+  public:
+    AwaitCond::Op await_op;
+    RmwAction::Kind rmw_kind;
+
+    arg2() {}
+    arg2(AwaitCond::Op await_op) : await_op(await_op) {}
+    arg2(RmwAction::Kind kind) : rmw_kind(kind) {}
+  } arg2;
   SymData::block_type _expected, _written;
 
   SymEv() : kind(NONE) {};
@@ -86,9 +94,11 @@ struct SymEv {
     return {LOAD_AWAIT, addr, std::move(cond)};
   }
   static SymEv Store(SymData addr) { return {STORE, std::move(addr)}; }
-  static SymEv Rmw(SymData addr) { return {RMW, std::move(addr)}; }
+  static SymEv Rmw(SymData addr, RmwAction action) {
+    return {RMW, std::move(addr), std::move(action)};
+  }
   static SymEv XchgAwait(SymData addr, AwaitCond cond) {
-      return {XCHG_AWAIT, std::move(addr), std::move(cond)};
+    return {XCHG_AWAIT, std::move(addr), std::move(cond)};
   }
   static SymEv CmpXhg(SymData addr, SymData::block_type expected) {
     return {CMPXHG, addr, expected};
@@ -131,6 +141,7 @@ struct SymEv {
   bool has_data() const;
   bool has_expected() const;
   bool has_cond() const { return kind == LOAD_AWAIT || kind == XCHG_AWAIT; };
+  bool has_rmwaction() const { return kind == RMW; }
   bool empty() const { return kind == NONE; }
   const SymAddrSize &addr()   const { assert(has_addr()); return arg.addr; }
         int          num()    const { assert(has_num()); return arg.num; }
@@ -141,7 +152,11 @@ struct SymEv {
   }
   AwaitCond cond() const {
     assert(has_cond());
-    return {_await_op, _expected};
+    return {arg2.await_op, _expected};
+  }
+  RmwAction rmwaction() const {
+    assert(has_rmwaction());
+    return {arg2.rmw_kind, _expected};
   }
 
   void purge_data();
@@ -150,7 +165,7 @@ struct SymEv {
 private:
   SymEv(enum kind kind, union arg arg) : kind(kind), arg(arg) {};
   SymEv(enum kind kind, union arg arg, AwaitCond cond)
-    : kind(kind), arg(arg), _await_op(cond.op),
+    : kind(kind), arg(arg), arg2(cond.op),
     _expected(std::move(cond.operand)) {};
   SymEv(enum kind kind, SymData addr_written)
     : kind(kind), arg(std::move(addr_written.get_ref())),
@@ -160,9 +175,17 @@ private:
       _expected(std::move(expected)),
       _written(std::move(addr_written.get_shared_block())) {};
   SymEv(enum kind kind, SymData addr_written, AwaitCond cond)
-    : kind(kind), arg(std::move(addr_written.get_ref())), _await_op(cond.op),
+    : kind(kind), arg(addr_written.get_ref()), arg2(cond.op),
       _expected(std::move(cond.operand)),
-      _written(std::move(addr_written.get_shared_block())) {};
+      _written(std::move(addr_written.get_shared_block())) {
+      assert(has_data());
+    };
+  SymEv(enum kind kind, SymData addr_written, RmwAction action)
+    : kind(kind), arg(addr_written.get_ref()), arg2(action.kind),
+      _expected(std::move(action.operand)),
+      _written(std::move(addr_written.get_shared_block())) {
+      assert(has_data());
+    };
 };
 
 inline std::ostream &operator<<(std::ostream &os, const SymEv &e){

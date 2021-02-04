@@ -544,8 +544,8 @@ void RFSCTraceBuilder::do_atomic_store(const SymData &sd){
   }
 }
 
-bool RFSCTraceBuilder::atomic_rmw(const SymData &sd){
-  if (!record_symbolic(SymEv::Rmw(sd))) return false;
+bool RFSCTraceBuilder::atomic_rmw(const SymData &sd, RmwAction action){
+  if (!record_symbolic(SymEv::Rmw(sd, std::move(action)))) return false;
   do_load(sd.get_ref());
   do_atomic_store(sd);
   return true;
@@ -560,7 +560,7 @@ bool RFSCTraceBuilder::xchg_await(const SymData &sd, AwaitCond cond){
 }
 
 bool RFSCTraceBuilder::xchg_await_fail(const SymData &sd, AwaitCond cond){
-  insert_into_blocking_awaits(sd.get_ref(), std::move(cond), true);
+  insert_into_blocking_awaits(SymEv::XchgAwait(sd, std::move(cond)));
   return true;
 }
 
@@ -620,21 +620,22 @@ void RFSCTraceBuilder::clear_blocking_await(const SymAddrSize &ml) {
 }
 
 bool RFSCTraceBuilder::load_await_fail(const SymAddrSize &ml, AwaitCond cond) {
-  insert_into_blocking_awaits(ml, std::move(cond), false);
+  insert_into_blocking_awaits(SymEv::LoadAwait(ml, std::move(cond)));
   return true;
 }
 
-void RFSCTraceBuilder::insert_into_blocking_awaits
-(const SymAddrSize &ml, AwaitCond cond, bool is_xchg) {
+static bool symev_is_store(const SymEv &e);
+void RFSCTraceBuilder::insert_into_blocking_awaits(SymEv e) {
   IPid current = curev().iid.get_pid();
   int  index   = curev().iid.get_index();
+  SymAddrSize ml = e.addr();
   auto &ml_awaits = blocking_awaits[ml];
 
   if (conf.debug_print_on_reset)
     llvm::dbgs() << "Detecting blocking await by " << threads[current].cpid
                  << "\n";
 
-  auto ret = ml_awaits.try_emplace(current, index, std::move(cond), is_xchg);
+  auto ret = ml_awaits.try_emplace(current, index, std::move(e));
   /* It can be that we already have am entry in blocking_awaits for this
    * event in the following case: A blocking await is enabled by a
    * store, but before we schedule it, yet another store disables it
@@ -656,6 +657,9 @@ void RFSCTraceBuilder::insert_into_blocking_awaits
     aw.index = curev().iid.get_index();
   } else {
     assert(aw.index == curev().iid.get_index());
+#ifndef NDEBUG
+    const auto &cond = aw.sym(ml).cond();
+#endif
     assert(aw.cond.op == cond.op);
     assert(memcmp(aw.cond.operand.get(), cond.operand.get(), ml.size) == 0);
   }

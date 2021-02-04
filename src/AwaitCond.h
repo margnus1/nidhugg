@@ -32,7 +32,7 @@ struct AwaitCond {
    *   Equal   - If the comparison is true when lhs is equal to rhs
    *   Greater - If the comparison is true when lhs is greater than rhs
    */
-  enum Op : unsigned {
+  enum Op : uint8_t {
     None,
     UGT = 0b0001,
     EQ  = 0b0010,
@@ -44,8 +44,12 @@ struct AwaitCond {
     SGE = 0b1011,
     SLT = 0b1100,
     SLE = 0b1110,
-  } op;
+  } op = None;
   SymData::block_type operand;
+
+  AwaitCond() {}
+  AwaitCond(Op op, SymData::block_type operand)
+    : op(op), operand(std::move(operand)) { assert(op != None); }
 
   static const char *name(Op op);
 
@@ -53,6 +57,28 @@ struct AwaitCond {
     return satisfied_by(data.get_block(), data.get_ref().size);
   }
   bool satisfied_by(const void *data, std::size_t size) const;
+};
+
+struct RmwAction {
+  enum Kind : uint8_t {
+    XCHG = 1,
+    ADD,
+    SUB,
+    AND,
+    NAND,
+    OR,
+    XOR,
+    MAX,
+    MIN,
+    UMAX,
+    UMIN,
+  } kind;
+  SymData::block_type operand;
+
+  static const char *name(Kind op);
+
+  /* Computes the result of this rmw action when given data as input */
+  void apply_to(SymData &dst, const SymData &data);
 };
 
 #endif

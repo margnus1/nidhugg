@@ -62,7 +62,7 @@ public:
   virtual NODISCARD bool spawn() override;
   virtual NODISCARD bool store(const SymData &ml) override;
   virtual NODISCARD bool atomic_store(const SymData &ml) override;
-  virtual NODISCARD bool atomic_rmw(const SymData &ml) override;
+  virtual NODISCARD bool atomic_rmw(const SymData &ml, RmwAction action) override;
   virtual NODISCARD bool xchg_await(const SymData &ml, AwaitCond cond) override;
   virtual NODISCARD bool xchg_await_fail(const SymData &ml, AwaitCond cond) override;
   virtual NODISCARD bool compare_exchange
@@ -451,8 +451,7 @@ protected:
   /* Insert the currently detected blocking await operation into
    * blocking_awaits.
    */
-  void insert_into_blocking_awaits(const SymAddrSize &ml, AwaitCond cond,
-                                   bool is_xchg);
+  void insert_into_blocking_awaits(SymEv e);
 
   /* Finds the index in prefix of the event of process pid that has iid-index
    * index.

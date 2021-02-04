@@ -67,3 +67,67 @@ const char *AwaitCond::name(Op op) {
   };
   return names[op];
 }
+
+
+const char *RmwAction::name(Kind kind) {
+  const static char *names[] = {
+    nullptr, "XCHG", "ADD", "SUB", "AND", "NAND", "OR", "XOR", "MAX", "MIN",
+    "UMAX", "UMIN",
+  };
+  return names[kind];
+}
+
+void RmwAction::apply_to(SymData &dst, const SymData &data) {
+  assert(dst.get_ref() == data.get_ref());
+  assert(dst.get_shared_block().unique());
+  std::size_t size = dst.get_ref().size;
+  uint8_t *outp = static_cast<uint8_t*>(dst.get_block());
+  const uint8_t *inp, *argp;
+  inp = static_cast<uint8_t*>(data.get_block());
+  argp = static_cast<uint8_t*>(operand.get());
+
+  switch (kind) {
+  case ADD: case SUB: {
+    int multiplier =    llvm::sys::IsBigEndianHost ? -1 : 1;
+    std::size_t shift = llvm::sys::IsBigEndianHost ? size - 1 : 0;
+    outp += shift;
+    inp += shift;
+    argp += shift;
+    uint8_t carry = 0;
+    for (size_t i = 0; i < size; ++i) {
+      uint16_t sum;
+      if (kind == ADD) sum = inp[i*multiplier] + argp[i*multiplier] + carry;
+      else sum = inp[i*multiplier] - argp[i*multiplier] + carry;
+      outp[i*multiplier] = sum;
+      carry = sum >> 8;
+    }
+  } break;
+  case AND: case NAND: case OR: case XOR:  {
+    for (size_t i = 0; i < size; ++i) {
+      uint8_t res, lhs, rhs;
+      lhs = inp[i];
+      rhs = argp[i];
+      switch(kind) {
+      case AND:  res = lhs & rhs; break;
+      case NAND: res = ~(lhs & rhs); break;
+      case OR:   res = lhs | rhs; break;
+      case XOR:  res = lhs ^ rhs; break;
+      default:abort();
+      }
+      outp[i] = res;
+    }
+  } break;
+  case MAX: case MIN: case UMAX: case UMIN:  {
+    bool is_signed = kind == MAX || kind == MIN;
+    int out = (is_signed ? smemcmp : memcmp)(data.get_block(), operand.get(), size);
+    bool take_rhs = out > 0;
+    if (kind == MAX || kind == UMAX) take_rhs = !take_rhs;
+    const uint8_t *res = take_rhs ? argp : inp;
+    memcpy(outp, res, size);
+  } break;
+  case XCHG: {
+    memcpy(outp, argp, size);
+  } break;
+  default: abort();
+  }
+}
