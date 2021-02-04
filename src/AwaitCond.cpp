@@ -42,7 +42,7 @@ namespace {
 
 bool AwaitCond::satisfied_by(const void *data, std::size_t size) const {
   int cmp;
-  if ((cmp >> 3) & 0b1) {
+  if ((static_cast<unsigned>(op) >> 3) & 0b1) {
     cmp = smemcmp(data, operand.get(), size);
   } else {
     cmp = std::memcmp(data, operand.get(), size);
@@ -55,7 +55,7 @@ bool AwaitCond::satisfied_by(const void *data, std::size_t size) const {
   } else {
     shift = 0;
   }
-  return (static_cast<int>(op) >> shift) & 0b1;
+  return (static_cast<unsigned>(op) >> shift) & 0b1;
 }
 
 const char *AwaitCond::name(Op op) {
