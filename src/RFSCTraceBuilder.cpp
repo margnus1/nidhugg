@@ -1925,6 +1925,8 @@ void RFSCTraceBuilder::plan(VClock<IPid> horizon,
         return std::make_pair(i, std::ref(e));
       };
 
+      const VClock<IPid> above = compute_blocked_above_clock(pid, aw);
+
       /* This code duplicates some of the logic for non-blocked awaits
        * below; can we merge the cases? */
       auto try_read_from = [&](int j) {
@@ -1972,6 +1974,8 @@ void RFSCTraceBuilder::plan(VClock<IPid> horizon,
       auto try_swap = [&](int i) {
         /* We're in the opposite case of try_read_from_rmw; i.e. the
            await is j, and comes after i */
+        /* Is i in our predecessors? If so, we must not modify it. */
+        if (above.includes(prefix[i].iid)) return;
         int original_read_from = *prefix[i].read_from;
         if (!rf_satisfies_cond(addr, cond, original_read_from)) return;
         bool i_decides = aw.get_decision_depth() > prefix[i].get_decision_depth();
@@ -2016,8 +2020,6 @@ void RFSCTraceBuilder::plan(VClock<IPid> horizon,
           tasks_created++;
         }
       };
-
-      const VClock<IPid> above = compute_blocked_above_clock(pid, aw);
 
       try_read_from(-1);
       for (unsigned p = 0; p < threads.size(); ++p) {
