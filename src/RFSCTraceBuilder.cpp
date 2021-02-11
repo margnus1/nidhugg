@@ -2190,10 +2190,10 @@ void RFSCTraceBuilder::plan(VClock<IPid> horizon,
         if (*horizon_overlay.prefix_at(j).read_from() != int(i)
             && !::is_await(horizon_overlay, j))
           return;
-        bool i_decides = prefix[j].get_decision_depth() > prefix[i].get_decision_depth();
+        bool i_decides = true; // prefix[j].get_decision_depth() > prefix[i].get_decision_depth();
         /* XXX: Could we be incorrectly filtered by prefix[i].pinned? */
         if (!i_decides && prefix[j].pinned) return;
-        assert(!prefix[j].pinned);
+        // assert(!prefix[j].pinned);
         assert(prefix[i_decides ? i : j].decision_ptr);
         DecisionNode &decision = *prefix[i_decides ? i : j].decision_ptr;
         std::shared_ptr<RFSCUnfoldingTree::UnfoldingNode> read_from
