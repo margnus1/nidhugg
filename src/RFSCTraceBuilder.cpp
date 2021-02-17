@@ -1600,7 +1600,10 @@ bool RFSCTraceBuilder::is_store_when_reading_from(unsigned i, int read_from) con
     assert(res || e.kind == SymEv::XCHG_AWAIT);
     return res;
   }
-  if (e.kind != SymEv::CMPXHG && e.kind != SymEv::CMPXHGFAIL) return false;
+  if (e.kind != SymEv::CMPXHG && e.kind != SymEv::CMPXHGFAIL) {
+    assert(!symev_is_store(e));
+    return false;
+  }
   SymData expected = e.expected();
   SymData actual = get_data(read_from, e.addr());
   assert(e.addr() == actual.get_ref());
