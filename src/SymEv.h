@@ -95,6 +95,7 @@ struct SymEv {
   }
   static SymEv Store(SymData addr) { return {STORE, std::move(addr)}; }
   static SymEv Rmw(SymData addr, RmwAction action) {
+    assert(addr.get_block());
     return {RMW, std::move(addr), std::move(action)};
   }
   static SymEv XchgAwait(SymData addr, AwaitCond cond) {
