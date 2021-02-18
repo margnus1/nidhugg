@@ -156,7 +156,9 @@ def run_test(tst):
 
 def look_for_extra_opts(srcfile):
     with open(srcfile, 'r') as f:
-        while (line := f.readline()):
+        while True:
+            line = f.readline()
+            if not line: break
             if not line.startswith('//'): break
             if line.startswith('// nidhuggc:'):
                 return list(filter(None, line[12:].strip().split(' ')))
