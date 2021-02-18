@@ -153,11 +153,17 @@ struct SymEv {
   }
   AwaitCond cond() const {
     assert(has_cond());
+    assert(_expected);
     return {arg2.await_op, _expected};
   }
   RmwAction rmwaction() const {
     assert(has_rmwaction());
+    assert(_expected);
     return {arg2.rmw_kind, _expected};
+  }
+  RmwAction::Kind rmw_kind() const {
+    assert(has_rmwaction());
+    return arg2.rmw_kind;
   }
 
   void purge_data();
