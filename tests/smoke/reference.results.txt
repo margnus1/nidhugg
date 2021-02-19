@@ -57,6 +57,7 @@ fib_bench_true_2 Forbid : 140
 # We disable await benchmarks that do not yet achive the right trace counts for
 # now
 # simplified_dekker Forbid : 3
+safestack_c21_21 Forbid : 36
 broken_mutual_exclusion Forbid : 3
 revealed_write Forbid : 2
 # revealed_write_reverse Forbid : 2
