@@ -377,8 +377,11 @@ bool TSOTraceBuilder::reset(){
 }
 
 IID<CPid> TSOTraceBuilder::get_iid() const{
-  IPid pid = curev().iid.get_pid();
-  int idx = curev().iid.get_index();
+  return get_iid(prefix_idx);
+}
+IID<CPid> TSOTraceBuilder::get_iid(unsigned i) const{
+  IPid pid = prefix[i].iid.get_pid();
+  int idx = prefix[i].iid.get_index();
   return IID<CPid>(threads[pid].cpid,idx);
 }
 
@@ -589,6 +592,17 @@ void TSOTraceBuilder::debug_print() const {
     lines.push_back(" SLP:" + oslp_string(sleep_set));
     obs_sleep_wake(sleep_set, ipid, prefix[i].sym);
   }
+  for(const auto &ab : blocked_awaits) {
+    for (const auto &pa : ab.second) {
+      IPid ipid = pa.first;
+      const auto &a = pa.second;
+      SymEv ev = SymEv::LoadAwait({ab.first,a.size}, a.cond);
+      iid_offs = std::max(iid_offs,2*ipid+int(iid_string(Branch(ipid),a.index).size()));
+      symev_offs = std::max(symev_offs,
+                            int(ev.to_string().size()));
+      lines.push_back("");
+    }
+  }
 
   /* Add wakeup tree */
   std::vector<int> iid_map = iid_map_at(prefix.len());
@@ -602,14 +616,27 @@ void TSOTraceBuilder::debug_print() const {
     }
   }
 
-  for(unsigned i = 0; i < prefix.len(); ++i){
+  unsigned i = 0;
+  for(; i < prefix.len(); ++i){
     IPid ipid = prefix[i].iid.get_pid();
     llvm::dbgs() << rpad("",2+ipid*2)
                  << rpad(iid_string(i),iid_offs-ipid*2)
                  << " " << rpad(events_to_string(prefix[i].sym),symev_offs)
                  << lines[i] << "\n";
   }
-  for (unsigned i = prefix.len(); i < lines.size(); ++i){
+  for(const auto &ab : blocked_awaits) {
+    for (const auto &pb : ab.second) {
+      IPid ipid = pb.first;
+      const auto &b = pb.second;
+      SymEv ev = SymEv::LoadAwait({ab.first,b.size}, b.cond);
+      llvm::dbgs() << " b"
+                   << rpad("",ipid*2)
+                   << rpad(iid_string(Branch(ipid),b.index),iid_offs-ipid*2)
+                   << " " << rpad(ev.to_string(),symev_offs)
+                   << lines[i++] << "\n";
+    }
+  }
+  for (; i < lines.size(); ++i){
     llvm::dbgs() << std::string(2+iid_offs + 1+symev_offs, ' ') << lines[i] << "\n";
   }
   if(errors.size()){
@@ -925,6 +952,105 @@ bool TSOTraceBuilder::compare_exchange
   return true;
 }
 
+bool TSOTraceBuilder::load_await(const SymAddrSize &ml, AwaitCond cond) {
+  if (conf.memory_model != Configuration::SC) {
+    invalid_input_error("Load-Await is only implemented for SC right now");
+    return false;
+  }
+  if (!record_symbolic(SymEv::LoadAwait(ml, cond))) return false;
+
+  if (dryrun) {
+    assert(prefix_idx+1 < int(prefix.len()));
+    assert(dry_sleepers <= prefix[prefix_idx+1].sleep.size());
+    IPid pid = prefix[prefix_idx+1].sleep[dry_sleepers-1];
+    VecSet<SymAddr> &A = threads[pid].sleep_accesses_r;
+    for(SymAddr b : ml){
+      A.insert(b);
+    }
+    return true;
+  }
+  curev().may_conflict = true;
+  IPid ipid = curev().iid.get_pid();
+  assert(threads[ipid].store_buffer.empty());
+
+  VecSet<int> seen_accesses;
+  VecSet<int> &happens_after_later = curev().happens_after_later;
+  VecSet<std::pair<int,int>> seen_pairs;
+
+  /* Clear it from blocked_awaits, if it is present. */
+  auto it = blocked_awaits.find(ml.addr);
+  if (it != blocked_awaits.end()) {
+    it->second.erase(curev().iid.get_pid());
+    if (it->second.empty()) blocked_awaits.erase(it);
+  }
+
+  if (!do_await(prefix_idx, ml, cond, seen_accesses)) return false;
+  for (SymAddr b : ml) {
+    ByteInfo &bi = mem[b];
+    observe_memory(b, bi, happens_after_later, seen_pairs, false);
+
+    /* Register load in memory */
+    mem[b].last_read[ipid/2] = prefix_idx;
+    wakeup(Access::R,b);
+  }
+
+  see_events(seen_accesses);
+  see_event_pairs(seen_pairs);
+  return true;
+}
+
+bool TSOTraceBuilder::load_await_fail(const SymAddrSize &ml, AwaitCond cond) {
+  if (conf.memory_model != Configuration::SC) {
+    invalid_input_error("Load-Await is only implemented for SC right now");
+    return false;
+  }
+  assert(!dryrun);
+
+  auto iid = curev().iid;
+  auto ret = blocked_awaits[ml.addr].try_emplace
+    (iid.get_pid(), iid.get_index(), ml.size, std::move(cond));
+#ifndef NDEBUG
+  if(!ret.second) {
+    BlockedAwait &aw = ret.first->second;
+    assert(aw.index == curev().iid.get_index());
+    assert(aw.cond.op == cond.op);
+    assert(memcmp(aw.cond.operand.get(), cond.operand.get(), ml.size) == 0);
+  }
+#endif
+
+  /* We postpone race detection of failed awaits until the end, in case
+   * they get unblocked. */
+
+  return true;
+}
+
+bool TSOTraceBuilder::do_await(unsigned j, const SymAddrSize &ml,
+                               const AwaitCond &cond, VecSet<int> &seen) {
+  bool found_any = false, can_stop = false;
+  for (unsigned i = j; !(found_any && can_stop);) {
+    if (i-- == 0) break;
+    if (std::any_of(prefix[i].sym.begin(), prefix[i].sym.end(),
+                    [](const SymEv &e) { return e.kind == SymEv::FULLMEM; })) {
+      invalid_input_error
+        ("Full memory conflicts are not compatible with awaits", get_iid(i));
+      return false;
+    }
+    if (!std::any_of(prefix[i].sym.begin(), prefix[i].sym.end(),
+                     [&ml](const SymEv &e) { return symev_does_store(e)
+                         && e.addr().overlaps(ml); })) {
+      continue;
+    }
+    if (awaitcond_satisfied_before(i, ml, cond)) {
+      if (conf.debug_print_on_reset) {
+        llvm::dbgs() << "Yes, I can reverse " << i << iid_string(i) << " with " << j << (j != prefix.len() ? iid_string(j) : "b") << "\n";
+      }
+      seen.insert(i);
+      found_any = true;
+    }
+  }
+  return true;
+}
+
 bool TSOTraceBuilder::full_memory_conflict(){
   if (!record_symbolic(SymEv::Fullmem())) return false;
   if(dryrun){
@@ -1092,10 +1218,10 @@ bool TSOTraceBuilder::mutex_lock_fail(const SymAddrSize &ml){
   assert(mutexes.count(ml.addr));
   Mutex &mutex = mutexes[ml.addr];
   assert(0 <= mutex.last_lock);
-  add_lock_fail_race(mutex, mutex.last_lock);
+  add_lock_fail_race(mutex.last_lock);
 
   if(0 <= last_full_memory_conflict){
-    add_lock_fail_race(mutex, last_full_memory_conflict);
+    add_lock_fail_race(last_full_memory_conflict);
   }
   return true;
 }
@@ -1473,6 +1599,7 @@ TSOTraceBuilder::obs_sleep_wake(struct obs_sleep &sleep, const Event &e) const{
 static bool symev_does_load(const SymEv &e) {
   return e.kind == SymEv::LOAD || e.kind == SymEv::RMW
     || e.kind == SymEv::CMPXHG || e.kind == SymEv::CMPXHGFAIL
+    || e.kind == SymEv::LOAD_AWAIT
     || e.kind == SymEv::FULLMEM;
 }
 
@@ -1593,6 +1720,22 @@ static void rev_recompute_data
       break;
     }
   }
+}
+
+bool TSOTraceBuilder::awaitcond_satisfied_before
+(unsigned i, const SymAddrSize &ml, const AwaitCond &cond) const {
+  /* Recompute what's written */
+  SymData data(ml, ml.size);
+  VecSet<SymAddr> needed(ml.begin(), ml.end());
+  std::memset(data.get_block(), 0, ml.size);
+
+  for (unsigned j = i; !needed.empty();) {
+    if (j-- == 0) break;
+    const sym_ty &js = prefix[j].sym;
+    rev_recompute_data(data, needed, js.end(), js.begin());
+  }
+
+  return cond.satisfied_by(data);
 }
 
 void TSOTraceBuilder::recompute_cmpxhg_success
@@ -1716,11 +1859,11 @@ void TSOTraceBuilder::add_lock_suc_race(int lock, int unlock){
   curev().races.push_back(Race::LockSuc(lock,prefix_idx,unlock));
 }
 
-void TSOTraceBuilder::add_lock_fail_race(const Mutex &m, int event){
+void TSOTraceBuilder::add_lock_fail_race(int event){
   assert(0 <= event);
   assert(event < prefix_idx);
 
-  lock_fail_races.push_back(Race::LockFail(event,prefix_idx,curev().iid,&m));
+  lock_fail_races.push_back(Race::LockFail(event,prefix_idx,curev().iid));
 }
 
 void TSOTraceBuilder::add_observed_race(int first, int second){
@@ -1874,6 +2017,8 @@ void TSOTraceBuilder::compute_vclocks(){
         /* A virtual event does not contribute to the vclock and cannot
          * subsume races. */
         if (s.kind == Race::LOCK_FAIL) return false;
+        /* Should not be present in races */
+        assert(s.kind != Race::AWAIT_FAIL);
         /* Also filter out observed races with nonfirst witness */
         if (f.kind == Race::OBSERVED && s.kind == Race::OBSERVED
             && f.first_event == s.first_event
@@ -1896,6 +2041,15 @@ void TSOTraceBuilder::compute_vclocks(){
         prefix[i].clock += prefix[it->first_event].clock;
       }
     }
+    assert(prefix[i].happens_after_later.empty()
+           || (prefix[i].sym.size() == 1
+               && prefix[i].sym[0].kind == SymEv::LOAD_AWAIT));
+    for (unsigned b : prefix[i].happens_after_later) {
+      if (!prefix[i].clock.includes(prefix[b].iid)) {
+        prefix[i].clock += prefix[b].clock;
+      }
+    }
+    prefix[i].happens_after_later.clear();
 
     /* Now delete the subsumed races. We delayed doing this to avoid
      * iterator invalidation. */
@@ -1950,7 +2104,8 @@ static bool symev_has_pid(const SymEv &e) {
 }
 
 static bool symev_is_load(const SymEv &e) {
-  return e.kind == SymEv::LOAD || e.kind == SymEv::CMPXHGFAIL;
+  return e.kind == SymEv::LOAD || e.kind == SymEv::CMPXHGFAIL
+    || e.kind == SymEv::LOAD_AWAIT;
 }
 
 static bool symev_is_unobs_store(const SymEv &e) {
@@ -2040,6 +2195,27 @@ bool TSOTraceBuilder::is_observed_conflict
 
 void TSOTraceBuilder::do_race_detect() {
   assert(has_vclocks);
+
+  /* Compute all races of blocked awaits. */
+  for (const auto &ab : blocked_awaits) {
+    for (const auto &pb : ab.second) {
+      IID<IPid> iid(pb.first, pb.second.index);
+      VecSet<int> races;
+      SymAddrSize sas{ab.first,pb.second.size};
+      VClock<IPid> clock = reconstruct_blocked_clock(iid);
+      do_await(prefix.len(), sas, pb.second.cond, races);
+      for (int r : races) {
+        assert(r >= 0 && r < ssize_t(prefix.len()));
+        /* Can we optimise do_await to not include these guys in the
+         * first place? */
+        if (!clock.includes(prefix[r].iid)) {
+          lock_fail_races.push_back
+            (Race::AwaitFail(r, prefix.len(), iid, sas, pb.second.cond));
+        }
+      }
+    }
+  }
+
   /* Bucket sort races by first_event index */
   std::vector<std::vector<const Race*>> races(prefix.len());
   for (const Race &r : lock_fail_races) races[r.first_event].push_back(&r);
@@ -2099,15 +2275,15 @@ void TSOTraceBuilder::race_detect
   const sym_ty *cand_sym = nullptr;
   const VClock<IPid> &iclock = prefix[i].clock;
   for(int k = i+1; k <= j; ++k){
-    const IID<IPid> &iid = k == j && race.kind == Race::LOCK_FAIL
+    const IID<IPid> &iid = k == j && race.is_fail_kind()
       ? race.second_process : prefix[k].iid;
     IPid p = iid.get_pid();
     /* Did we already cover p? */
     if(p < int(candidates.size()) && 0 <= candidates[p]) continue;
     const Event *pevent;
     int psize = 1;
-    if (k == j && race.kind == Race::LOCK_FAIL) {
-      mutex_probe_event = reconstruct_lock_event(race);
+    if (k == j && race.is_fail_kind()) {
+      mutex_probe_event = reconstruct_blocked_event(race);
       pevent = &mutex_probe_event;
     } else {pevent = &prefix[k]; psize = prefix.branch(k).size;}
     if (k == j) psize = 1;
@@ -2278,8 +2454,8 @@ wakeup_sequence(const Race &race) const{
   const Event &first = prefix[i];
   Event second({-1,0});
   Branch second_br(-1);
-  if (race.kind == Race::LOCK_FAIL) {
-    second = reconstruct_lock_event(race);
+  if (race.is_fail_kind()) {
+    second = reconstruct_blocked_event(race);
     /* XXX: Lock events don't have alternatives, right? */
     second_br = Branch(second.iid.get_pid());
     second_br.sym = std::move(second.sym);
@@ -2368,26 +2544,38 @@ void TSOTraceBuilder::iid_map_step_rev(std::vector<int> &iid_map, const Branch &
   iid_map[event.pid] -= event.size;
 }
 
-TSOTraceBuilder::Event TSOTraceBuilder::
-reconstruct_lock_event(const Race &race) const {
-  assert(race.kind == Race::LOCK_FAIL);
-  Event ret(race.second_process);
-  /* Compute the clock of the locking process (event k in prefix is
-   * something unrelated since this is a lock probe) */
-  /* Find last event of p before this mutex probe */
-  IPid p = race.second_process.get_pid();
-  if (race.second_process.get_index() != 1) {
-    int last = find_process_event(p, race.second_process.get_index()-1);
-    ret.clock = prefix[last].clock;
+VClock<int> TSOTraceBuilder::reconstruct_blocked_clock(IID<IPid> event) const {
+  VClock<IPid> ret;
+  /* Compute the clock of the blocking process (event k in prefix is
+   * something unrelated since this is a blocked event) */
+  /* Find last event of p before this event */
+  IPid p = event.get_pid();
+  if (event.get_index() != 1) {
+    int last = find_process_event(p, event.get_index()-1);
+    ret = prefix[last].clock;
   }
   /* Recompute the clock of this mutex_lock_fail */
-  ++ret.clock[p];
+  ++ret[p];
 
-  assert(std::any_of(prefix[race.first_event].sym.begin(),
-                     prefix[race.first_event].sym.end(),
-                     [](const SymEv &e){ return e.kind == SymEv::M_LOCK
-                         || e.kind == SymEv::FULLMEM; }));
-  ret.sym = prefix[race.first_event].sym;
+  return ret;
+}
+
+TSOTraceBuilder::Event TSOTraceBuilder::
+reconstruct_blocked_event(const Race &race) const {
+  assert(race.is_fail_kind());
+  Event ret(race.second_process);
+  ret.clock = reconstruct_blocked_clock(race.second_process);
+
+  if (race.kind == Race::LOCK_FAIL) {
+    assert(std::any_of(prefix[race.first_event].sym.begin(),
+                       prefix[race.first_event].sym.end(),
+                       [](const SymEv &e){ return e.kind == SymEv::M_LOCK
+                           || e.kind == SymEv::FULLMEM; }));
+    ret.sym = prefix[race.first_event].sym;
+  } else {
+    assert(race.kind == Race::AWAIT_FAIL);
+    ret.sym = {SymEv::LoadAwait(race.ml, race.cond)};
+  }
   return ret;
 }
 

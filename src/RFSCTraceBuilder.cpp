@@ -658,7 +658,7 @@ void RFSCTraceBuilder::insert_into_blocking_awaits(SymEv e) {
   } else {
     assert(aw.index == curev().iid.get_index());
 #ifndef NDEBUG
-    const auto &cond = aw.sym(ml).cond();
+    const auto &cond = e.cond();
 #endif
     assert(aw.cond.op == cond.op);
     assert(memcmp(aw.cond.operand.get(), cond.operand.get(), ml.size) == 0);

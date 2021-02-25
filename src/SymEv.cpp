@@ -40,9 +40,12 @@ bool SymEv::is_compatible_with(SymEv other) const {
   switch(kind) {
   case LOAD_AWAIT: case XCHG_AWAIT:
     if (arg2.await_op != other.arg2.await_op) return false;
-    assert(_expected && other._expected);
-    if (memcmp(_expected.get(), other._expected.get(), arg.addr.size) != 0)
-      return false;
+    if (_expected) {
+      assert(other._expected);
+      // We need stable addresses
+      // if (memcmp(_expected.get(), other._expected.get(), arg.addr.size) != 0)
+      //   return false;
+    }
     /* fallthrough */
   case LOAD:
   case M_INIT: case M_LOCK: case M_UNLOCK: case M_DELETE:
