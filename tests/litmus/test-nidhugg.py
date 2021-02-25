@@ -136,8 +136,8 @@ def run_test(tst):
     res = dict()
     try:
         srcfile = LITMUSDIR + '/' + tst['tstname'] + '.c'
-        extra_opts = look_for_extra_opts(srcfile)
-        out = subprocess.check_output([NIDHUGGCBIN, '--sc', '--rf']
+        extra_opts = look_for_extra_opts(srcfile) or ['--sc', '--rf']
+        out = subprocess.check_output([NIDHUGGCBIN]
                                       + extra_opts + [srcfile],
                                       stderr = subprocess.STDOUT).decode()
         lines = out.split("\n")

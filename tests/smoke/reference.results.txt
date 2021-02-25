@@ -73,5 +73,29 @@ xchgawait_test3 Forbid : 5
 # xchgawait_test4 Forbid : 4
 await_mud Forbid : 3
 await_muddier Forbid : 4
+
+# Optimal/Observers with load-await
+simplified_dekker_opt Forbid : 3
+safestack_c21_21_opt Forbid : 36
+broken_mutual_exclusion_opt Forbid : 4
+broken_mutual_exclusion_obs Forbid : 3
+revealed_write_opt Forbid : 2
+revealed_write_reverse_opt Forbid : 2
+parker_reproc_1_opt Forbid : 7
+parker_reproc_1_obs Forbid : 5
+dekker_lock_trylock_opt Forbid : 4
+await_mud_opt Forbid : 3
+await_muddier_opt Forbid : 4
+
+# Optimal/Observers with xchg-await
+# xchgawait_vs_inc_chain_opt Forbid : 3
+# xchgawait_vs_inc_chain_2_opt Forbid : 3
+# xchgawait_vs_inc_chain_reverse_opt Forbid : 3
+# xchgawait_vs_inc_chain_reverse_blocked_opt Forbid : 3
+# xchgawait_test1_opt Forbid : 1
+# xchgawait_test2_opt Forbid : 223
+# xchgawait_test3_opt Forbid : 5
+# xchgawait_test4_opt Forbid : 4
+
 # Total number of traces: 1116
 # Total running time: 9.51 s
