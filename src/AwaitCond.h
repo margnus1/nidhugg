@@ -25,6 +25,7 @@
 #include "SymAddr.h"
 
 struct AwaitCond {
+  SymData::block_type operand;
   /* An Op is a bitfield, with the following meanings for bits 3..0, msb
    * first:
    *   Signed  - If the comparison is of signed values
@@ -45,11 +46,10 @@ struct AwaitCond {
     SLT = 0b1100,
     SLE = 0b1110,
   } op = None;
-  SymData::block_type operand;
 
   AwaitCond() {}
   AwaitCond(Op op, SymData::block_type operand)
-    : op(op), operand(std::move(operand)) { assert(op != None); }
+    : operand(std::move(operand)), op(op) { assert(op != None); }
 
   static const char *name(Op op);
 
@@ -60,6 +60,7 @@ struct AwaitCond {
 };
 
 struct RmwAction {
+  SymData::block_type operand;
   enum Kind : uint8_t {
     XCHG = 1,
     ADD,
@@ -73,7 +74,9 @@ struct RmwAction {
     UMAX,
     UMIN,
   } kind;
-  SymData::block_type operand;
+
+  RmwAction(Kind kind, SymData::block_type operand)
+    : operand(std::move(operand)), kind(kind) {}
 
   static const char *name(Kind op);
 
