@@ -88,14 +88,16 @@ await_mud_opt Forbid : 3
 await_muddier_opt Forbid : 4
 
 # Optimal/Observers with xchg-await
-# xchgawait_vs_inc_chain_opt Forbid : 3
-# xchgawait_vs_inc_chain_2_opt Forbid : 3
-# xchgawait_vs_inc_chain_reverse_opt Forbid : 3
-# xchgawait_vs_inc_chain_reverse_blocked_opt Forbid : 3
-# xchgawait_test1_opt Forbid : 1
-# xchgawait_test2_opt Forbid : 223
-# xchgawait_test3_opt Forbid : 5
-# xchgawait_test4_opt Forbid : 4
+xchgawait_vs_inc_chain_opt Forbid : 3
+xchgawait_vs_inc_chain_2_opt Forbid : 3
+xchgawait_vs_inc_chain_reverse_opt Forbid : 3
+xchgawait_vs_inc_chain_reverse_blocked_opt Forbid : 3
+xchgawait_test1_opt Forbid : 1
+# The results for test2 opt/obs have not been confirmed
+xchgawait_test2_opt Forbid : 398
+xchgawait_test2_obs Forbid : 369
+xchgawait_test3_opt Forbid : 5
+xchgawait_test4_opt Forbid : 4
 
 # Total number of traces: 1116
 # Total running time: 9.51 s

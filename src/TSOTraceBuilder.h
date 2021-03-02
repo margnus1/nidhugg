@@ -56,6 +56,9 @@ public:
   virtual NODISCARD bool store(const SymData &ml) override;
   virtual NODISCARD bool atomic_store(const SymData &ml) override;
   virtual NODISCARD bool atomic_rmw(const SymData &ml, RmwAction action) override;
+  virtual NODISCARD bool xchg_await(const SymData &ml, AwaitCond cond) override;
+  virtual NODISCARD bool xchg_await_fail(const SymData &ml, AwaitCond cond) override;
+
   virtual NODISCARD bool compare_exchange
   (const SymData &sd, const SymData::block_type expected, bool success) override;
   virtual NODISCARD bool load(const SymAddrSize &ml) override;
@@ -356,13 +359,12 @@ protected:
       /* A blocked awaiting event */
       AWAIT_FAIL,
     };
-    AwaitCond cond;
+    SymEv ev;
     Kind kind;
     int first_event;
     int second_event;
     IID<IPid> second_process;
     union{
-      SymAddrSize ml;
       int witness_event;
       int alternative;
       int unlock_event;
@@ -382,17 +384,16 @@ protected:
     static Race Nondet(int event, int alt) {
       return Race(NONDET, event, -1, {-1,0}, alt);
     };
-    static Race AwaitFail(int first, int second, IID<IPid> process,
-                          const SymAddrSize &ml, AwaitCond cond) {
-      return Race(AWAIT_FAIL, first, second, process, ml, std::move(cond));
+    static Race AwaitFail(int first, int second, IID<IPid> process, SymEv ev) {
+      return Race(AWAIT_FAIL, first, second, process, std::move(ev));
     };
     bool is_fail_kind() const {
       return kind == LOCK_FAIL || kind == AWAIT_FAIL;
     }
   private:
-    Race(Kind k, int f, int s, IID<IPid> p, const SymAddrSize &ml,
-         AwaitCond &&cond) : cond(std::move(cond)), kind(k), first_event(f),
-                             second_event(s), second_process(p), ml(ml) {}
+    Race(Kind k, int f, int s, IID<IPid> p, SymEv &&ev)
+      : ev(std::move(ev)), kind(k), first_event(f), second_event(s),
+        second_process(p) {}
     Race(Kind k, int f, int s, IID<IPid> p, int w) :
       kind(k), first_event(f), second_event(s), second_process(p),
       witness_event(w) {}
@@ -405,11 +406,10 @@ protected:
 
   /* All currently blocking Await-events. */
   struct BlockedAwait {
-    BlockedAwait(int index, uint16_t size, AwaitCond cond)
-      : cond(std::move(cond)), index(index), size(size) {}
-    AwaitCond cond;
+    BlockedAwait(int index, SymEv ev)
+      : ev(std::move(ev)), index(index) {}
+    SymEv ev;
     int index;
-    uint16_t size;
   };
   std::unordered_map<SymAddr, boost::container::flat_map<IPid,BlockedAwait>>
     blocked_awaits;

@@ -125,7 +125,7 @@ std::string SymEv::to_string(std::function<std::string(int)> pid_str) const {
         + "," + block_to_string(_written, arg.addr.size)
         + "," + RmwAction::name(arg2.rmw_kind)
         + " " + block_to_string(_expected, arg.addr.size) + ")";
-    case XCHG_AWAIT: return "RmwAwait(" + arg.addr.to_string(pid_str)
+    case XCHG_AWAIT: return "XchgAwait(" + arg.addr.to_string(pid_str)
         + "," + block_to_string(_written, arg.addr.size) + ", "
         + AwaitCond::name(arg2.await_op) + " "
         + block_to_string(_expected, arg.addr.size)+ ")";

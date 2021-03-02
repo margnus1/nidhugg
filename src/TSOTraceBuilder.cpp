@@ -364,6 +364,7 @@ bool TSOTraceBuilder::reset(){
   mutexes.clear();
   cond_vars.clear();
   mem.clear();
+  blocked_awaits.clear();
   last_full_memory_conflict = -1;
   prefix_idx = -1;
   dryrun = false;
@@ -596,10 +597,9 @@ void TSOTraceBuilder::debug_print() const {
     for (const auto &pa : ab.second) {
       IPid ipid = pa.first;
       const auto &a = pa.second;
-      SymEv ev = SymEv::LoadAwait({ab.first,a.size}, a.cond);
       iid_offs = std::max(iid_offs,2*ipid+int(iid_string(Branch(ipid),a.index).size()));
       symev_offs = std::max(symev_offs,
-                            int(ev.to_string().size()));
+                            int(a.ev.to_string().size()));
       lines.push_back("");
     }
   }
@@ -628,11 +628,10 @@ void TSOTraceBuilder::debug_print() const {
     for (const auto &pb : ab.second) {
       IPid ipid = pb.first;
       const auto &b = pb.second;
-      SymEv ev = SymEv::LoadAwait({ab.first,b.size}, b.cond);
       llvm::dbgs() << " b"
                    << rpad("",ipid*2)
                    << rpad(iid_string(Branch(ipid),b.index),iid_offs-ipid*2)
-                   << " " << rpad(ev.to_string(),symev_offs)
+                   << " " << rpad(b.ev.to_string(),symev_offs)
                    << lines[i++] << "\n";
     }
   }
@@ -684,7 +683,8 @@ static bool symev_is_store(const SymEv &e) {
 
 static bool symev_does_store(const SymEv &e) {
   return e.kind == SymEv::UNOBS_STORE || e.kind == SymEv::STORE
-    || e.kind == SymEv::CMPXHG || e.kind == SymEv::RMW;
+    || e.kind == SymEv::CMPXHG || e.kind == SymEv::RMW
+    || e.kind == SymEv::XCHG_AWAIT;
 }
 
 static SymAddrSize sym_get_last_write(const sym_ty &sym, SymAddr addr){
@@ -885,6 +885,118 @@ bool TSOTraceBuilder::atomic_rmw(const SymData &sd, RmwAction action) {
   return true;
 }
 
+bool TSOTraceBuilder::xchg_await(const SymData &sd, AwaitCond cond) {
+  if (!record_symbolic(SymEv::XchgAwait(sd, cond))) return false;
+  const SymAddrSize &ml = sd.get_ref();
+  if(dryrun){
+    assert(prefix_idx+1 < int(prefix.len()));
+    assert(dry_sleepers <= prefix[prefix_idx+1].sleep.size());
+    IPid pid = prefix[prefix_idx+1].sleep[dry_sleepers-1];
+    VecSet<SymAddr> &R = threads[pid].sleep_accesses_r;
+    VecSet<SymAddr> &W = threads[pid].sleep_accesses_w;
+    for(SymAddr b : ml){
+      R.insert(b);
+      W.insert(b);
+    }
+    return true;
+  }
+  curev().may_conflict = true;
+  IPid ipid = curev().iid.get_pid();
+  assert(ipid % 2 == 0);
+
+  { // Add the clock of the auxiliary thread (because of fence semantics)
+    assert(threads[ipid].store_buffer.empty());
+    add_happens_after_thread(prefix_idx, ipid+1);
+  }
+
+  VecSet<int> seen_accesses;
+  VecSet<int> &happens_after_later = curev().happens_after_later;
+  VecSet<std::pair<int,int>> seen_pairs;
+
+  /* Clear it from blocked_awaits, if it is present. */
+  auto it = blocked_awaits.find(ml.addr);
+  if (it != blocked_awaits.end()) {
+    it->second.erase(curev().iid.get_pid());
+    if (it->second.empty()) blocked_awaits.erase(it);
+  }
+
+  /* See previous updates & reads to ml */
+  if (!do_await(prefix_idx, ml, cond, seen_accesses)) return false;
+  for(SymAddr b : ml){
+    ByteInfo &bi = mem[b];
+    int lu = bi.last_update;
+    const SymAddrSize &lu_ml = bi.last_update_ml;
+    bool lu_before_read = false;
+    assert(lu < int(prefix.len()));
+
+    for(int i : bi.last_read){
+      if(0 <= i && prefix[i].iid.get_pid() != ipid) {
+        /* A lot of these will be redundant. We should consider how to
+         * make this more efficient. */
+        if (awaitcond_satisfied_before(i, ml, cond)) {
+          seen_accesses.insert(i);
+        } else {
+          happens_after_later.insert(i);
+        }
+      }
+      if (i > lu) lu_before_read = true;
+    }
+
+    if (lu_before_read) {
+      bi.unordered_updates.clear();
+      bi.before_unordered.clear();
+    } else if(0 <= lu) {
+      IPid lu_tipid = prefix[lu].iid.get_pid() & ~0x1;
+      if(lu_tipid == ipid && ml != lu_ml && lu != prefix_idx){
+        add_happens_after(prefix_idx, lu);
+      }
+
+      observe_memory(b, bi, happens_after_later, seen_pairs, true);
+    }
+    /* Register access in memory */
+    assert(bi.unordered_updates.empty());
+    bi.unordered_updates[ipid] = prefix_idx;
+    bi.last_update = prefix_idx;
+    bi.last_update_ml = ml;
+    wakeup(Access::W,b);
+  }
+
+  happens_after_later.insert(last_full_memory_conflict);
+
+  see_events(seen_accesses);
+  see_event_pairs(seen_pairs);
+  return true;
+}
+
+bool TSOTraceBuilder::xchg_await_fail(const SymData &sd, AwaitCond cond) {
+  if (conf.memory_model != Configuration::SC) {
+    invalid_input_error("Exchange-Await is only implemented for SC right now");
+    return false;
+  }
+  assert(!dryrun);
+
+  auto iid = curev().iid;
+  SymEv e = SymEv::XchgAwait(sd, std::move(cond));
+  const SymAddrSize &ml = sd.get_ref();
+  auto ret = blocked_awaits[ml.addr].try_emplace
+    (iid.get_pid(), iid.get_index(), std::move(e));
+#ifndef NDEBUG
+  if(!ret.second) {
+    BlockedAwait &aw = ret.first->second;
+    assert(aw.index == curev().iid.get_index());
+    const AwaitCond &one = e.cond();
+    const AwaitCond &other = aw.ev.cond();
+    assert(other.op == one.op);
+    assert(memcmp(other.operand.get(), one.operand.get(), ml.size) == 0);
+  }
+#endif
+
+  /* We postpone race detection of failed awaits until the end, in case
+   * they get unblocked. */
+
+  return true;
+}
+
 bool TSOTraceBuilder::load(const SymAddrSize &ml){
   if (!record_symbolic(SymEv::Load(ml))) return false;
   do_load(ml);
@@ -1009,14 +1121,17 @@ bool TSOTraceBuilder::load_await_fail(const SymAddrSize &ml, AwaitCond cond) {
   assert(!dryrun);
 
   auto iid = curev().iid;
+  SymEv ev(SymEv::LoadAwait(ml, std::move(cond)));
   auto ret = blocked_awaits[ml.addr].try_emplace
-    (iid.get_pid(), iid.get_index(), ml.size, std::move(cond));
+    (iid.get_pid(), iid.get_index(), std::move(ev));
 #ifndef NDEBUG
   if(!ret.second) {
     BlockedAwait &aw = ret.first->second;
     assert(aw.index == curev().iid.get_index());
-    assert(aw.cond.op == cond.op);
-    assert(memcmp(aw.cond.operand.get(), cond.operand.get(), ml.size) == 0);
+    const AwaitCond &one = ev.cond();
+    const AwaitCond &other = aw.ev.cond();
+    assert(other.op == one.op);
+    assert(memcmp(other.operand.get(), one.operand.get(), ml.size) == 0);
   }
 #endif
 
@@ -1024,6 +1139,21 @@ bool TSOTraceBuilder::load_await_fail(const SymAddrSize &ml, AwaitCond cond) {
    * they get unblocked. */
 
   return true;
+}
+
+static bool shadows_all_of(const sym_ty &sym, const SymAddrSize &ml) {
+  VecSet<SymAddr> addrs(ml.begin(), ml.end());
+  for (const SymEv &e : sym) {
+    /* Only some event kinds shadows */
+    if (e.kind == SymEv::FULLMEM) return true; // Probably unreachable
+    if (e.kind != SymEv::STORE && e.kind != SymEv::FULLMEM
+        && e.kind != SymEv::XCHG_AWAIT) continue;
+    for (SymAddr a : e.addr()) addrs.erase(a);
+    if (addrs.empty()) return true;
+  }
+
+  assert(!addrs.empty());
+  return false;
 }
 
 bool TSOTraceBuilder::do_await(unsigned j, const SymAddrSize &ml,
@@ -1042,6 +1172,7 @@ bool TSOTraceBuilder::do_await(unsigned j, const SymAddrSize &ml,
                          && e.addr().overlaps(ml); })) {
       continue;
     }
+    can_stop = can_stop || shadows_all_of(prefix[i].sym, ml);
     if (awaitcond_satisfied_before(i, ml, cond)) {
       if (conf.debug_print_on_reset) {
         llvm::dbgs() << "Yes, I can reverse " << i << iid_string(i) << " with " << j << (j != prefix.len() ? iid_string(j) : "b") << "\n";
@@ -1095,7 +1226,8 @@ static bool observe_store(sym_ty &syms, const SymAddr &ml) {
     assert(it != syms.begin());
     --it;
     if((it->kind == SymEv::STORE || it->kind == SymEv::RMW
-        || it->kind == SymEv::CMPXHG) && it->addr().includes(ml)) break;
+        || it->kind == SymEv::CMPXHG || it->kind == SymEv::XCHG_AWAIT)
+       && it->addr().includes(ml)) break;
     if (it->kind == SymEv::UNOBS_STORE && it->addr().includes(ml)) {
       *it = SymEv::Store(it->data());
       return true;
@@ -1589,7 +1721,7 @@ TSOTraceBuilder::obs_sleep_wake(struct obs_sleep &sleep, const Event &e) const{
 static bool symev_does_load(const SymEv &e) {
   return e.kind == SymEv::LOAD || e.kind == SymEv::RMW
     || e.kind == SymEv::CMPXHG || e.kind == SymEv::CMPXHGFAIL
-    || e.kind == SymEv::LOAD_AWAIT
+    || e.kind == SymEv::LOAD_AWAIT || e.kind == SymEv::XCHG_AWAIT
     || e.kind == SymEv::FULLMEM;
 }
 
@@ -1696,6 +1828,7 @@ static void rev_recompute_data
     case SymEv::UNOBS_STORE:
     case SymEv::RMW:
     case SymEv::CMPXHG:
+    case SymEv::XCHG_AWAIT:
       assert(symev_does_store(p));
       if (data.get_ref().overlaps(p.addr())) {
         for (SymAddr a : p.addr()) {
@@ -2033,9 +2166,9 @@ void TSOTraceBuilder::compute_vclocks(){
     }
     assert(prefix[i].happens_after_later.empty()
            || (prefix[i].sym.size() == 1
-               && prefix[i].sym[0].kind == SymEv::LOAD_AWAIT));
-    for (unsigned b : prefix[i].happens_after_later) {
-      if (!prefix[i].clock.includes(prefix[b].iid)) {
+               && prefix[i].sym[0].has_cond()));
+    for (int b : prefix[i].happens_after_later) {
+      if (b != -1 && !prefix[i].clock.includes(prefix[b].iid)) {
         prefix[i].clock += prefix[b].clock;
       }
     }
@@ -2191,16 +2324,17 @@ void TSOTraceBuilder::do_race_detect() {
     for (const auto &pb : ab.second) {
       IID<IPid> iid(pb.first, pb.second.index);
       VecSet<int> races;
-      SymAddrSize sas{ab.first,pb.second.size};
+      const SymEv &ev = pb.second.ev;
+      const SymAddrSize &sas = ev.addr();
+      assert(!try_find_process_event(pb.first, iid.get_index()).first);
       VClock<IPid> clock = reconstruct_blocked_clock(iid);
-      do_await(prefix.len(), sas, pb.second.cond, races);
+      do_await(prefix.len(), sas, ev.cond(), races);
       for (int r : races) {
         assert(r >= 0 && r < ssize_t(prefix.len()));
         /* Can we optimise do_await to not include these guys in the
          * first place? */
         if (!clock.includes(prefix[r].iid)) {
-          lock_fail_races.push_back
-            (Race::AwaitFail(r, prefix.len(), iid, sas, pb.second.cond));
+          lock_fail_races.push_back(Race::AwaitFail(r, prefix.len(), iid, ev));
         }
       }
     }
@@ -2564,7 +2698,7 @@ reconstruct_blocked_event(const Race &race) const {
     ret.sym = prefix[race.first_event].sym;
   } else {
     assert(race.kind == Race::AWAIT_FAIL);
-    ret.sym = {SymEv::LoadAwait(race.ml, race.cond)};
+    ret.sym = {race.ev};
   }
   return ret;
 }
