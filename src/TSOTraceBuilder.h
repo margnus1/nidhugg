@@ -356,14 +356,16 @@ protected:
       LOCK_SUC,
       /* A nondeterministic event that can be performed differently */
       NONDET,
-      /* A blocked awaiting event */
-      AWAIT_FAIL,
+      /* An event that can be blocked by other processes. Includes a set
+       * "exclude" to exclude from the wakeup sequence. */
+      SEQUENCE,
     };
     SymEv ev;
     Kind kind;
     int first_event;
     int second_event;
     IID<IPid> second_process;
+    std::vector<unsigned> exclude; // XXX: Make me fixed_vector
     union{
       int witness_event;
       int alternative;
@@ -384,19 +386,22 @@ protected:
     static Race Nondet(int event, int alt) {
       return Race(NONDET, event, -1, {-1,0}, alt);
     };
-    static Race AwaitFail(int first, int second, IID<IPid> process, SymEv ev) {
-      return Race(AWAIT_FAIL, first, second, process, std::move(ev));
-    };
+    static Race Sequence(int first, int second, IID<IPid> process, SymEv ev,
+                         std::vector<unsigned> exclude) {
+      return Race(SEQUENCE, first, second, process, std::move(ev),
+                  std::move(exclude));
+    }
     bool is_fail_kind() const {
-      return kind == LOCK_FAIL || kind == AWAIT_FAIL;
+      return kind == LOCK_FAIL || kind == SEQUENCE;
     }
   private:
-    Race(Kind k, int f, int s, IID<IPid> p, SymEv &&ev)
-      : ev(std::move(ev)), kind(k), first_event(f), second_event(s),
-        second_process(p) {}
     Race(Kind k, int f, int s, IID<IPid> p, int w) :
       kind(k), first_event(f), second_event(s), second_process(p),
       witness_event(w) {}
+    Race(Kind k, int f, int s, IID<IPid> p, SymEv &&ev,
+         std::vector<unsigned> &&exclude) :
+      ev(std::move(ev)), kind(k), first_event(f), second_event(s),
+      second_process(p), exclude(std::move(exclude)) {}
   };
 
   /* Locations in the trace where a process is blocked waiting for a
@@ -574,11 +579,12 @@ protected:
                       VecSet<int> &seen_accesses,
                       VecSet<std::pair<int,int>> &seen_pairs,
                       bool is_update);
-  /* Adds the races implied by an await at position pos in prefix. pos
-   * may be prefix.len() (corresponding to a deadlocked await).
+  /* Adds the races implied by an await at position pos in prefix to
+   * races. pos may be prefix.len() (corresponding to a deadlocked
+   * await).
    * Returns false if an error was added */
-  bool do_await(unsigned pos, const SymAddrSize &ml, const AwaitCond &cond,
-                VecSet<int> &seen_accesses);
+  bool do_await(unsigned pos, const IID<IPid> &iid, const SymEv &e,
+                const VClock<IPid> &above_clock, std::vector<Race> &races);
 
   /* Finds the index in prefix of the event of process pid that has iid-index
    * index.
@@ -711,6 +717,11 @@ protected:
    */
   bool awaitcond_satisfied_before(unsigned i, const SymAddrSize &ml,
                                   const AwaitCond &cond) const;
+  /* The same, but assuming that before playing the await, we play a set
+   * of events given as seq (referring to events in prefix)
+   */
+  bool awaitcond_satisfied_by(unsigned i, const std::vector<unsigned> &seq,
+                              const SymAddrSize &ml, const AwaitCond &cond) const;
   struct obs_sleep {
     struct sleeper {
       IPid pid;

@@ -99,5 +99,11 @@ xchgawait_test2_obs Forbid : 369
 xchgawait_test3_opt Forbid : 5
 xchgawait_test4_opt Forbid : 4
 
+# Optimal/Observers with awaits and commuting rmws
+xchgawait_vs_indep_inc Forbid : 3
+await_vs_indep_inc Forbid : 3
+await_vs_indep_inc_2 Forbid : 3
+await_vs_indep_inc_easy Forbid : 3
+
 # Total number of traces: 1116
 # Total running time: 9.51 s

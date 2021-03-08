@@ -80,10 +80,13 @@ const char *RmwAction::name(Kind kind) {
 void RmwAction::apply_to(SymData &dst, const SymData &data) {
   assert(dst.get_ref() == data.get_ref());
   assert(dst.get_shared_block().unique());
-  std::size_t size = dst.get_ref().size;
-  uint8_t *outp = static_cast<uint8_t*>(dst.get_block());
+  apply_to(dst.get_block(), dst.get_ref().size, data.get_block());
+}
+
+void RmwAction::apply_to(void *dst, std::size_t size, void *data) {
+  uint8_t *outp = static_cast<uint8_t*>(dst);
   const uint8_t *inp, *argp;
-  inp = static_cast<uint8_t*>(data.get_block());
+  inp = static_cast<uint8_t*>(data);
   argp = static_cast<uint8_t*>(operand.get());
 
   switch (kind) {
@@ -119,7 +122,7 @@ void RmwAction::apply_to(SymData &dst, const SymData &data) {
   } break;
   case MAX: case MIN: case UMAX: case UMIN:  {
     bool is_signed = kind == MAX || kind == MIN;
-    int out = (is_signed ? smemcmp : memcmp)(data.get_block(), operand.get(), size);
+    int out = (is_signed ? smemcmp : memcmp)(data, operand.get(), size);
     bool take_rhs = out > 0;
     if (kind == MAX || kind == UMAX) take_rhs = !take_rhs;
     const uint8_t *res = take_rhs ? argp : inp;

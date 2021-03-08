@@ -921,7 +921,6 @@ bool TSOTraceBuilder::xchg_await(const SymData &sd, AwaitCond cond) {
   }
 
   /* See previous updates & reads to ml */
-  if (!do_await(prefix_idx, ml, cond, seen_accesses)) return false;
   for(SymAddr b : ml){
     ByteInfo &bi = mem[b];
     int lu = bi.last_update;
@@ -1087,7 +1086,6 @@ bool TSOTraceBuilder::load_await(const SymAddrSize &ml, AwaitCond cond) {
   IPid ipid = curev().iid.get_pid();
   assert(threads[ipid].store_buffer.empty());
 
-  VecSet<int> seen_accesses;
   VecSet<int> &happens_after_later = curev().happens_after_later;
   VecSet<std::pair<int,int>> seen_pairs;
 
@@ -1098,7 +1096,6 @@ bool TSOTraceBuilder::load_await(const SymAddrSize &ml, AwaitCond cond) {
     if (it->second.empty()) blocked_awaits.erase(it);
   }
 
-  if (!do_await(prefix_idx, ml, cond, seen_accesses)) return false;
   for (SymAddr b : ml) {
     ByteInfo &bi = mem[b];
     observe_memory(b, bi, happens_after_later, seen_pairs, false);
@@ -1108,7 +1105,6 @@ bool TSOTraceBuilder::load_await(const SymAddrSize &ml, AwaitCond cond) {
     wakeup(Access::R,b);
   }
 
-  see_events(seen_accesses);
   see_event_pairs(seen_pairs);
   return true;
 }
@@ -1156,29 +1152,97 @@ static bool shadows_all_of(const sym_ty &sym, const SymAddrSize &ml) {
   return false;
 }
 
-bool TSOTraceBuilder::do_await(unsigned j, const SymAddrSize &ml,
-                               const AwaitCond &cond, VecSet<int> &seen) {
-  bool found_any = false, can_stop = false;
-  for (unsigned i = j; !(found_any && can_stop);) {
+bool TSOTraceBuilder::do_await(unsigned j, const IID<IPid> &iid, const SymEv &e,
+                               const VClock<IPid> &above_clock,
+                               std::vector<Race> &races) {
+  bool can_stop = false;
+  const SymAddrSize &ml = e.addr();
+  const AwaitCond &cond = e.cond();
+  std::vector<unsigned> unordered_accesses;
+  for (unsigned i = j;;) {
     if (i-- == 0) break;
-    if (std::any_of(prefix[i].sym.begin(), prefix[i].sym.end(),
+    const Event &ie = prefix[i];
+    if (std::any_of(ie.sym.begin(), ie.sym.end(),
                     [](const SymEv &e) { return e.kind == SymEv::FULLMEM; })) {
       invalid_input_error
         ("Full memory conflicts are not compatible with awaits", get_iid(i));
       return false;
     }
-    if (!std::any_of(prefix[i].sym.begin(), prefix[i].sym.end(),
+    if (!std::any_of(ie.sym.begin(), ie.sym.end(),
                      [&ml](const SymEv &e) { return symev_does_store(e)
                          && e.addr().overlaps(ml); })) {
       continue;
     }
-    can_stop = can_stop || shadows_all_of(prefix[i].sym, ml);
-    if (awaitcond_satisfied_before(i, ml, cond)) {
+    can_stop = can_stop || shadows_all_of(ie.sym, ml);
+    if (conf.commute_rmws) {
+      // Optimisation idea: Don't include a set of k's that shadow i
+      if (unordered_accesses.size() >= 20)
+        Debug::warn("TSOTracebuilder::do_await:exponential")
+          << "WARNING: Scaling exponentially on a large number of independent writes\n";
+      const auto &not_excluded = [this](const std::vector<unsigned> &exclude, unsigned e) {
+        const auto &eclock = prefix[e].clock;
+        for (unsigned x : exclude) {
+          if (eclock.includes(prefix[x].iid)) return false;
+        }
+        return true;
+      };
+      /* TODO: Can this be done non-recursively? (maybe by using include
+       * and exclude as the state somehow?) */
+      std::vector<unsigned> include; include.reserve(unordered_accesses.size());
+      std::vector<unsigned> exclude; exclude.reserve(unordered_accesses.size());
+      bool did_insert = false;
+      const std::function<void(unsigned)> try_subsequences = [&](const unsigned k) {
+        if (k == 0) {
+          // Do the do
+          assert(std::is_sorted(include.begin(), include.end()));
+          if (awaitcond_satisfied_by(i, include, ml, cond)) {
+            if (conf.debug_print_on_reset) {
+              llvm::dbgs() << "Yes, I can reverse " << i << iid_string(i) << " with "
+                           << j << (j != prefix.len() ? iid_string(j) : "b")
+                           << "\ninc: [";
+              for (unsigned i : include) llvm::dbgs() << i << iid_string(i) << ", ";
+              llvm::dbgs() << "] exc: [";
+              for (unsigned i : exclude) llvm::dbgs() << i << iid_string(i) << ", ";
+              llvm::dbgs() << "]\n";
+            }
+            races.push_back(Race::Sequence(i, j, iid, e, exclude)); // XXX
+            did_insert = true;
+          }
+          return;
+        } else {
+          const unsigned ke = unordered_accesses[k-1];
+          if (prefix[ke].clock.includes(ie.iid)) { //  ie.clock.includes(prefix[ke].iid))
+            /* ke is not in notdep(i) */
+            try_subsequences(k-1);
+            return;
+          }
+          if (!(above_clock.includes(prefix[ke].iid))) {
+            exclude.push_back(ke);
+            try_subsequences(k-1);
+            assert(exclude.back() == ke);
+            exclude.pop_back();
+          }
+          if (not_excluded(exclude, ke)) {
+            include.push_back(ke);
+            try_subsequences(k-1);
+            assert(include.back() == ke);
+            include.pop_back();
+          }
+        }
+      };
+      if (!above_clock.includes(ie.iid)) {
+        try_subsequences(unordered_accesses.size());
+      }
+      unordered_accesses.push_back(i);
+      if (can_stop && did_insert) break;
+    } else if (above_clock.includes(ie.iid)) {
+      continue;
+    } else if (awaitcond_satisfied_before(i, ml, cond)) {
       if (conf.debug_print_on_reset) {
         llvm::dbgs() << "Yes, I can reverse " << i << iid_string(i) << " with " << j << (j != prefix.len() ? iid_string(j) : "b") << "\n";
       }
-      seen.insert(i);
-      found_any = true;
+      races.push_back(Race::Sequence(i, j, iid, e, {}));
+      if (can_stop) break;
     }
   }
   return true;
@@ -1845,6 +1909,66 @@ static void rev_recompute_data
   }
 }
 
+template <class Iter>
+static void recompute_scan_rev
+(const SymAddrSize &desired, VecSet<SymAddr> &needed, std::vector<const SymEv*> &stack,
+ Iter end, Iter begin){
+  for (auto pi = end; !needed.empty() && (pi != begin);){
+    const SymEv &p = *(--pi);
+    switch(p.kind){
+    case SymEv::STORE:
+    case SymEv::UNOBS_STORE:
+    case SymEv::CMPXHG:
+    case SymEv::XCHG_AWAIT: {
+      assert(symev_does_store(p));
+      const SymAddrSize &sas = p.addr();
+      if (desired.overlaps(sas)) {
+        bool any = false;
+        for (SymAddr a : sas) {
+          if (needed.erase(a)) {
+            any = true;
+          }
+        }
+        if (any) stack.push_back(&p);
+      }
+    } break;
+    case SymEv::RMW: {
+      const SymAddrSize &sas = p.addr();
+      if (desired.overlaps(sas)
+          && std::any_of(sas.begin(), sas.end(),
+                         [&](const SymAddr a) { return needed.count(a); })) {
+        assert(sas.subsetof(desired));
+        needed.insert(VecSet<SymAddr>(sas.begin(), sas.end()));
+        stack.push_back(&p);
+      }
+    } break;
+    default:
+      assert(!symev_does_store(p));
+      break;
+    }
+  }
+}
+
+static void recompute_replay_fwd
+(SymData &data, std::vector<const SymEv*> &stack){
+  while(!stack.empty()) {
+    const SymEv &p = *stack.back();
+    stack.pop_back();
+    const SymAddrSize &sas = p.addr();
+    if (p.kind == SymEv::RMW) {
+      assert(sas.subsetof(data.get_ref()));
+      void *data_at_sas = (char*)data.get_block() + (sas.addr - data.get_ref().addr);
+      p.rmwaction().apply_to(data_at_sas, sas.size, data_at_sas);
+    } else {
+      assert(symev_does_store(p));
+      assert(data.get_ref().overlaps(sas));
+      for (SymAddr a : sas) {
+        data[a] = p.data()[a];
+      }
+    }
+  }
+}
+
 bool TSOTraceBuilder::awaitcond_satisfied_before
 (unsigned i, const SymAddrSize &ml, const AwaitCond &cond) const {
   /* Recompute what's written */
@@ -1857,6 +1981,34 @@ bool TSOTraceBuilder::awaitcond_satisfied_before
     const sym_ty &js = prefix[j].sym;
     rev_recompute_data(data, needed, js.end(), js.begin());
   }
+
+  return cond.satisfied_by(data);
+}
+
+bool TSOTraceBuilder::awaitcond_satisfied_by
+(unsigned i, const std::vector<unsigned> &seq, const SymAddrSize &ml,
+ const AwaitCond &cond) const {
+  /* Recompute what's written */
+  SymData data(ml, ml.size);
+  VecSet<SymAddr> needed(ml.begin(), ml.end());
+  std::memset(data.get_block(), 0, ml.size);
+  std::vector<const SymEv*> stack;
+
+  /* Last comes seq */
+  for (unsigned j = seq.size(); !needed.empty();) {
+    if (j-- == 0) break;
+    const sym_ty &js = prefix[seq[j]].sym;
+    recompute_scan_rev(ml, needed, stack, js.end(), js.begin());
+  }
+
+  /* Then comes then prefix[:i] */
+  for (unsigned j = i; !needed.empty();) {
+    if (j-- == 0) break;
+    const sym_ty &js = prefix[j].sym;
+    recompute_scan_rev(ml, needed, stack, js.end(), js.begin());
+  }
+
+  recompute_replay_fwd(data, stack);
 
   return cond.satisfied_by(data);
 }
@@ -2102,11 +2254,19 @@ void TSOTraceBuilder::compute_vclocks(){
       prefix[i].clock += prefix[j].clock;
     }
 
+    /* Generate await races (with stores, races with loads are handled eagerly) */
+    std::vector<Race> &races = prefix[i].races;
+    if (std::any_of(prefix[i].sym.begin(), prefix[i].sym.end(),
+                    [](const SymEv &e) { return e.has_cond(); })) {
+      const SymEv &aw = prefix[i].sym[0];
+      assert(prefix[i].sym.size() == 1);
+      do_await(i, prefix[i].iid, aw, prefix[i].clock, races);
+    }
+
     /* Now we want add the possibly reversible edges, but first we must
      * check for reversibility, since this information is lost (more
      * accurately less easy to compute) once we add them to the clock.
      */
-    std::vector<Race> &races = prefix[i].races;
 
     /* First move all races that are not pairs (and thus cannot be
      * subsumed by other events) to the front.
@@ -2140,8 +2300,10 @@ void TSOTraceBuilder::compute_vclocks(){
         /* A virtual event does not contribute to the vclock and cannot
          * subsume races. */
         if (s.kind == Race::LOCK_FAIL) return false;
-        /* Should not be present in races */
-        assert(s.kind != Race::AWAIT_FAIL);
+        /* Sequence races can subsume each other, but that is */
+        // XXX: Not implemented
+        if (s.kind == Race::SEQUENCE)
+            return false;
         /* Also filter out observed races with nonfirst witness */
         if (f.kind == Race::OBSERVED && s.kind == Race::OBSERVED
             && f.first_event == s.first_event
@@ -2323,19 +2485,18 @@ void TSOTraceBuilder::do_race_detect() {
   for (const auto &ab : blocked_awaits) {
     for (const auto &pb : ab.second) {
       IID<IPid> iid(pb.first, pb.second.index);
-      VecSet<int> races;
+      std::vector<Race> races;
       const SymEv &ev = pb.second.ev;
-      const SymAddrSize &sas = ev.addr();
       assert(!try_find_process_event(pb.first, iid.get_index()).first);
       VClock<IPid> clock = reconstruct_blocked_clock(iid);
-      do_await(prefix.len(), sas, ev.cond(), races);
-      for (int r : races) {
-        assert(r >= 0 && r < ssize_t(prefix.len()));
+      do_await(prefix.len(), iid, ev, clock, races);
+      for (Race &r : races) {
+        assert(r.first_event >= 0 && r.first_event < ssize_t(prefix.len()));
         /* Can we optimise do_await to not include these guys in the
          * first place? */
-        if (!clock.includes(prefix[r].iid)) {
-          lock_fail_races.push_back(Race::AwaitFail(r, prefix.len(), iid, ev));
-        }
+        // XXX: What about other events in include?
+        assert (!clock.includes(prefix[r.first_event].iid));
+        lock_fail_races.push_back(std::move(r));
       }
     }
   }
@@ -2378,6 +2539,10 @@ void TSOTraceBuilder::race_detect
       .put_child(Branch({prefix[i].iid.get_pid(),race.alternative,
                          prefix.branch(i).sym}));
     return;
+  }
+  if (race.kind == Race::SEQUENCE) {
+    llvm::dbgs() << "ERROR: No support in Source-DPOR for awaits+commuting RMWs yet\n";
+    abort();
   }
 
   /* In the case that race is a failed mutex probe, there's no Event in prefix
@@ -2578,6 +2743,8 @@ wakeup_sequence(const Race &race) const{
   const Event &first = prefix[i];
   Event second({-1,0});
   Branch second_br(-1);
+  std::vector<unsigned>::const_iterator exclude{};
+  std::vector<unsigned>::const_iterator exclude_end = exclude;
   if (race.is_fail_kind()) {
     second = reconstruct_blocked_event(race);
     /* XXX: Lock events don't have alternatives, right? */
@@ -2593,10 +2760,15 @@ wakeup_sequence(const Race &race) const{
     second.wakeup.clear();
     second_br = branch_with_symbolic_data(j);
   }
-  if (race.kind == Race::OBSERVED) {
-  } else {
+  if (race.kind != Race::OBSERVED) {
     /* Only replay the racy event. */
     second_br.size = 1;
+  }
+  if (race.kind == Race::SEQUENCE) {
+    exclude = race.exclude.begin();
+    exclude_end = race.exclude.end();
+    if (conf.debug_print_on_reset)
+      llvm::dbgs() << "SEQUENCE race with " << exclude_end - exclude << " exclusions\n";
   }
 
   /* v is the subsequence of events in prefix come after prefix[i],
@@ -2609,8 +2781,23 @@ wakeup_sequence(const Race &race) const{
   std::vector<const Event*> observers;
   std::vector<Branch> notobs;
 
+  /* A below-clock including all excluded events */
+  VClock<IPid> exclude_clock
+    (std::vector<int>(threads.size(), std::numeric_limits<int>::max()));
+
   for (int k = i + 1; k < int(prefix.len()); ++k){
-    if (!first.clock.leq(prefix[k].clock)) {
+    assert(exclude == exclude_end || long(*exclude) >= k);
+      const IID<IPid> &kiid = prefix[k].iid;
+    if (exclude != exclude_end && *exclude == unsigned(k)) {
+      /* XXX: We could just build the exclude clock in advance, and rely
+       * on the second branch
+       */
+      exclude_clock[kiid.get_pid()]
+        = std::min(exclude_clock[kiid.get_pid()], kiid.get_index());
+      ++exclude;
+    } else if (prefix[k].clock.intersects_below(exclude_clock)) {
+      /* continue */
+    } else if (!first.clock.leq(prefix[k].clock)) {
       v.emplace_back(branch_with_symbolic_data(k));
     } else if (race.kind == Race::OBSERVED && k != j) {
       if (!std::any_of(observers.begin(), observers.end(),
@@ -2697,7 +2884,7 @@ reconstruct_blocked_event(const Race &race) const {
                            || e.kind == SymEv::FULLMEM; }));
     ret.sym = prefix[race.first_event].sym;
   } else {
-    assert(race.kind == Race::AWAIT_FAIL);
+    assert(race.kind == Race::SEQUENCE);
     ret.sym = {race.ev};
   }
   return ret;
