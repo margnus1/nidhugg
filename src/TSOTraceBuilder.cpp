@@ -687,15 +687,6 @@ static bool symev_does_store(const SymEv &e) {
     || e.kind == SymEv::XCHG_AWAIT;
 }
 
-static SymAddrSize sym_get_last_write(const sym_ty &sym, SymAddr addr){
-  for (auto it = sym.end(); it != sym.begin();){
-    const SymEv &e = *(--it);
-    if (symev_does_store(e) && e.addr().includes(addr)) return e.addr();
-  }
-  assert(false && "No write touching addr found");
-  abort();
-}
-
 static VecSet<int> to_vecset_and_clear
 (boost::container::flat_map<int,unsigned> &set) {
   VecSet<int> ret;
@@ -2297,13 +2288,29 @@ void TSOTraceBuilder::compute_vclocks(){
     auto fill = frontier_filter
       (first_pair, end,
        [this](const Race &f, const Race &s){
+         /* return: Does s subsume f? */
         /* A virtual event does not contribute to the vclock and cannot
          * subsume races. */
         if (s.kind == Race::LOCK_FAIL) return false;
         /* Sequence races can subsume each other, but that is */
         // XXX: Not implemented
-        if (s.kind == Race::SEQUENCE)
+        if (s.kind == Race::SEQUENCE) {
+          assert(f.kind == Race::SEQUENCE || f.kind == Race::NONBLOCK);
+          int fe = f.first_event, se = s.first_event;
+          const std::vector<unsigned> &fx = f.exclude, &sx = s.exclude;
+          assert(std::is_sorted(fx.begin(), fx.end()));
+          assert(std::is_sorted(sx.begin(), sx.end()));
+          if (!prefix[se].clock.includes(prefix[fe].iid)) return false;
+          /* fe h-b se */
+
+          for (auto si = sx.begin(), fi = fx.begin(); si != sx.end(); ++si) {
+            while (fi != fx.end() && *fi < *si) { ++fi; }
+            if (fi != fx.end() && *fi == *si) { ++fi; continue; }
+            if (prefix[*si].clock.includes(prefix[fe].iid)) continue;
             return false;
+          }
+          return true;
+        }
         /* Also filter out observed races with nonfirst witness */
         if (f.kind == Race::OBSERVED && s.kind == Race::OBSERVED
             && f.first_event == s.first_event
@@ -2314,7 +2321,7 @@ void TSOTraceBuilder::compute_vclocks(){
           return s.witness_event <= f.witness_event;
         }
         int se = s.kind == Race::LOCK_SUC ? s.unlock_event : s.first_event;
-        return prefix[f.first_event].clock.leq(prefix[se].clock);
+        return prefix[se].clock.includes(prefix[f.first_event].iid);
        });
     /* Add clocks of remaining (reversible) races */
     for (auto it = first_pair; it != fill; ++it){
