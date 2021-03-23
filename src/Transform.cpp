@@ -21,6 +21,7 @@
 #include "LoopUnrollPass.h"
 #include "SpinAssumePass.h"
 #include "AssumeAwaitPass.h"
+#include "DeadCodeElimPass.h"
 #include "StrModule.h"
 #include "Transform.h"
 
@@ -112,6 +113,9 @@ namespace Transform {
      */
     PM.add(new ClearOptnonePass());
     PM.add(llvm::createPromoteMemoryToRegisterPass());
+    if (conf.transform_dead_code_elim) {
+      PM.add(new DeadCodeElimPass());
+    }
     if(conf.transform_spin_assume && conf.transform_loop_unroll < 0){
       PM.add(new SpinAssumePass());
     }

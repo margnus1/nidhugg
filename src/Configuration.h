@@ -184,6 +184,8 @@ public:
   bool transform_spin_assume;
   /* In module transformation, enable the AssumeAwait pass. */
   bool transform_assume_await;
+  /* In module transformation, enable the DeadCodeElim pass. */
+  bool transform_dead_code_elim = true;
   /* If transform_loop_unroll is non-negative, in module
    * transformation, enable loop unrolling with depth
    * transform_loop_unroll.

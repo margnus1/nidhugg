@@ -10,6 +10,7 @@ libnidhugg_a_SOURCES = \
   Configuration.cpp Configuration.h \
   CPid.cpp CPid.h \
   Cpubind.cpp Cpubind.h \
+  DeadCodeElimPass.cpp DeadCodeElimPass.h \
   Debug.cpp Debug.h \
   DetCheckTraceBuilder.cpp DetCheckTraceBuilder.h \
   DPORDriver.cpp DPORDriver.h \
