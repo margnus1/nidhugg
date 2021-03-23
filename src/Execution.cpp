@@ -1325,7 +1325,8 @@ void Interpreter::visitAtomicRMWInst(AtomicRMWInst &I){
 
   SymData sd = GetSymData(*Ptr_sas,I.getType(),NewVal);
   SymData operand = GetSymData(*Ptr_sas,I.getType(),Val);
-  if(!TB.atomic_rmw(sd, RmwAction{kind, std::move(operand.get_shared_block())})){
+  if(!TB.atomic_rmw(sd, RmwAction{kind, std::move(operand.get_shared_block()),
+                                  !I.use_empty()})){
     abort();
     return;
   }
