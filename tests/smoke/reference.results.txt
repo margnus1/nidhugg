@@ -105,5 +105,8 @@ await_vs_indep_inc Forbid : 3
 await_vs_indep_inc_2 Forbid : 3
 await_vs_indep_inc_easy Forbid : 3
 
+# Optimal/Observers with commuting rmws
+safestack_c21_21_opt_rmwcomm Forbid : 21
+
 # Total number of traces: 1116
 # Total running time: 9.51 s
