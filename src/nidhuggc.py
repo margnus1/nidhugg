@@ -28,6 +28,7 @@ nidhuggcparams = [
     {'name':'--nidhugg','help':'Specify the path to the nidhugg binary.','param':'PATH'},
     {'name':'--no-spin-assume','help':'Don\'t use the spin-assume transformation on module before calling nidhugg.','param':False},
     {'name':'--no-assume-await','help':'Don\'t use the assume-await transformation on module before calling nidhugg.','param':False},
+    {'name':'--no-assume-xchgawait','help':'Don\'t transform assume statements to xchg-await before calling nidhugg.','param':False},
     {'name':'--no-dead-code-elim','help':'Don\'t use the dead code elimination pass on module before calling nidhugg.','param':False},
     {'name':'--unroll','help':'Use unroll transformation on module before calling nidhugg.','param':'N'},
     {'name':'--gdb','help':'Run nidhugg under gdb','param':False},
@@ -49,6 +50,7 @@ nidhuggcparamaliases = {
     '-nidhugg':'--nidhugg',
     '-no-spin-assume':'--no-spin-assume',
     '-no-assume-await':'--no-assume-await',
+    '-no-assume-xchgawait':'--no-assume-xchgawait',
     '-no-dead-code-elim':'--no-dead-code-elim',
     '-unroll':'--unroll',
     '-gdb':'--gdb',
@@ -280,6 +282,8 @@ def main():
             elif argname == '--no-spin-assume':
                 transformargs.append(argname)
             elif argname == '--no-assume-await':
+                transformargs.append(argname)
+            elif argname == '--no-assume-xchgawait':
                 transformargs.append(argname)
             elif argname == '--no-dead-code-elim':
                 transformargs.append(argname)

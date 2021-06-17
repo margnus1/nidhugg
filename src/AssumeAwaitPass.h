@@ -44,8 +44,9 @@ private:
   static const unsigned no_sizes = 4;
   static unsigned sizes[no_sizes];
   llvm::Value *F_load_await[no_sizes];
+  llvm::Value *F_xchg_await[no_sizes];
   bool tryRewriteAssume(llvm::Function *F, llvm::BasicBlock *BB, llvm::Instruction *I) const;
-  llvm::Value *getLoadAwait(llvm::Type *t) const;
+  llvm::Value *getAwaitFunction(llvm::Instruction *Load) const;
 };
 
 #endif
