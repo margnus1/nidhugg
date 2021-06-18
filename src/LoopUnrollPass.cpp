@@ -64,6 +64,7 @@ bool LoopUnrollPass::runOnLoop(llvm::Loop *L, llvm::LPPassManager &LPM){
   llvm::SmallVector<llvm::BasicBlock*,10> SuccBlocks;
   L->getExitBlocks(SuccBlocks);
   llvm::Function *F = (*L->block_begin())->getParent();
+  if (excluded.count(F->getName().str())) return false;
   llvm::BasicBlock *Diverge = make_diverge_block(L);
 
   /* Each vector in bodies is the blocks of one version of the loop

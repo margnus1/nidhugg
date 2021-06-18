@@ -186,6 +186,10 @@ public:
    * transform_loop_unroll.
    */
   int transform_loop_unroll;
+  /* A set of function names that should be excluded from the loop-unrolling
+   * transformation.
+   */
+  VecSet<std::string> transform_loop_unroll_blacklist;
   /* Number to return from __VERIFIER_nondet_u?int() */
   Option<int> svcomp_nondet_int;
   /* If set, DPORDriver will continually print its progress to stdout. */

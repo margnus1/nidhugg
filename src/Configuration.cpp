@@ -128,6 +128,11 @@ cl_transform_loop_unroll("unroll",
                          llvm::cl::desc("Bound executions by allowing loops to iterate at\n"
                                         "most N times."));
 
+static llvm::cl::list<std::string>
+cl_transform_loop_unroll_blacklist("no-unroll",llvm::cl::NotHidden,
+                                   llvm::cl::value_desc("FUN"),
+                                   llvm::cl::desc("When unrolling with -unroll=N, exclude function(s) FUN."));
+
 static llvm::cl::opt<bool> cl_print_progress("print-progress",llvm::cl::NotHidden,
                                              llvm::cl::desc("Continually print analysis progress to stdout."));
 
@@ -204,6 +209,10 @@ void Configuration::assign_by_commandline(){
   check_robustness = cl_check_robustness;
   transform_spin_assume = !cl_transform_no_spin_assume;
   transform_loop_unroll = cl_transform_loop_unroll;
+  transform_loop_unroll_blacklist.clear();
+  for(std::string f : cl_transform_loop_unroll_blacklist){
+    transform_loop_unroll_blacklist.insert(f);
+  }
   if (cl_verifier_nondet_int.getNumOccurrences())
     svcomp_nondet_int = (int)cl_verifier_nondet_int;
   print_progress = cl_print_progress || cl_print_progress_estimate;

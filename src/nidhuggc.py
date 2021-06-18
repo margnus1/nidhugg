@@ -26,7 +26,8 @@ nidhuggcparams = [
     {'name':'--clangxx','help':'Specify the path to clang++.','param':'PATH'},
     {'name':'--nidhugg','help':'Specify the path to the nidhugg binary.','param':'PATH'},
     {'name':'--no-spin-assume','help':'Don\'t use the spin-assume transformation on module before calling nidhugg.','param':False},
-    {'name':'--unroll','help':'Use unroll transformation on module before calling nidhugg.','param':'N'}
+    {'name':'--unroll','help':'Use unroll transformation on module before calling nidhugg.','param':'N'},
+    {'name':'--no-unroll','help':'Function to exclude from unrolling with --unroll.','param':'FUN'},
 ]
 
 nidhuggcparamaliases = {
@@ -44,7 +45,8 @@ nidhuggcparamaliases = {
     '-clangxx':'--clangxx',
     '-nidhugg':'--nidhugg',
     '-no-spin-assume':'--no-spin-assume',
-    '-unroll':'--unroll'
+    '-unroll':'--unroll',
+    '-no-unroll':'--no-unroll',
 }
 
 # The name (absolute path) of the temporary directory where all
@@ -268,6 +270,8 @@ def main():
                 transformargs.append(argname)
             elif argname == '--unroll':
                 transformargs.append('--unroll={0}'.format(argarg))
+            elif argname == '--no-unroll':
+                transformargs.append('--no-unroll={0}'.format(argarg))
         if '--version' in nidhuggcargs:
             # Wait with printing version until all arguments have been parsed.
             # Because the nidhugg binary may be specified after --version.

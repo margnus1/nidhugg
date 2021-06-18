@@ -107,7 +107,7 @@ namespace Transform {
       if(conf.transform_spin_assume) {
         PM.add(new SpinAssumePass());
       }
-      PM.add(new LoopUnrollPass(conf.transform_loop_unroll));
+      PM.add(new LoopUnrollPass(conf.transform_loop_unroll, conf.transform_loop_unroll_blacklist));
     }
     /* Run some safe simplifications that both improve applicability
      * of our passes, and speed up model checking.

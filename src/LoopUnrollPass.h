@@ -25,12 +25,14 @@
 #include <llvm/Pass.h>
 #include <llvm/Analysis/LoopPass.h>
 
+#include "vecset.h"
 #include "Debug.h"
 
 class LoopUnrollPass : public llvm::LoopPass{
 public:
   static char ID;
-  LoopUnrollPass(int depth) : llvm::LoopPass(ID), unroll_depth(depth) {
+    LoopUnrollPass(int depth, const VecSet<std::string> &excluded = {})
+        : llvm::LoopPass(ID), unroll_depth(depth), excluded(excluded) {
     if(unroll_depth < 0){
       Debug::warn("loopunrollpass:negative depth")
         << "WARNING: Negative depth given to loop unroll pass. Defaulting to depth zero.\n";
@@ -47,6 +49,7 @@ public:
 protected:
   llvm::BasicBlock *make_diverge_block(llvm::Loop *L);
   int unroll_depth;
+  const VecSet<std::string> &excluded;
 };
 
 #endif
