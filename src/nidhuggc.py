@@ -27,7 +27,7 @@ nidhuggcparams = [
     {'name':'--nidhugg','help':'Specify the path to the nidhugg binary.','param':'PATH'},
     {'name':'--no-spin-assume','help':'Don\'t use the spin-assume transformation on module before calling nidhugg.','param':False},
     {'name':'--unroll','help':'Use unroll transformation on module before calling nidhugg.','param':'N'},
-    {'name':'--no-unroll','help':'Function to exclude from unrolling with --unroll.','param':'FUN'},
+    {'name':'--no-unroll','help':'Function to exclude from unrolling with --unroll.','param':'FUN','multiple':True},
 ]
 
 nidhuggcparamaliases = {
@@ -116,7 +116,12 @@ def get_args():
             for ap in nidhuggcparams:
                 if ap['param'] == False: continue
                 if arg.startswith(ap['name']+'='):
-                    A[ap['name']]=arg[len(ap['name'])+1:]
+                    value=arg[len(ap['name'])+1:]
+                    if 'multiple' in ap and ap['multiple']:
+                        if not ap['name'] in A: A[ap['name']] = []
+                        A[ap['name']].append(value)
+                    else:
+                        A[ap['name']]=value
                     foundparam=True
                     break
                 elif arg == ap['name']:
@@ -271,7 +276,8 @@ def main():
             elif argname == '--unroll':
                 transformargs.append('--unroll={0}'.format(argarg))
             elif argname == '--no-unroll':
-                transformargs.append('--no-unroll={0}'.format(argarg))
+                for fun in argarg:
+                    transformargs.append('--no-unroll={0}'.format(fun))
         if '--version' in nidhuggcargs:
             # Wait with printing version until all arguments have been parsed.
             # Because the nidhugg binary may be specified after --version.
