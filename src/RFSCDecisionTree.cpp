@@ -49,6 +49,8 @@ const std::shared_ptr<DecisionNode> &RFSCDecisionTree::find_ancestor
   return DecisionNode::get_ancestor(node.get(), wanted);
 }
 
+StatCounter RFSCDecisionTree::graph_cache_size;
+
 RFSCScheduler::~RFSCScheduler() = default;
 
 PriorityQueueScheduler::PriorityQueueScheduler() : RFSCScheduler() {}
@@ -202,6 +204,7 @@ const SaturatedGraph &DecisionNode::get_saturated_graph(std::function<void(Satur
   } while (node->depth != -1);
 
   construct(g);
+  RFSCDecisionTree::graph_cache_size.add(1);
 
   parent->cache_initialised.store(true, std::memory_order_release);
   return g;

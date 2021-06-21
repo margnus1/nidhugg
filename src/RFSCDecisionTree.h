@@ -24,6 +24,7 @@
 #include "SymEv.h"
 #include "SaturatedGraph.h"
 #include "RFSCUnfoldingTree.h"
+#include "StatCounter.h"
 
 #include <unordered_set>
 #include <mutex>
@@ -81,6 +82,7 @@ public:
       pruned_subtree(false), cache_initialised(false) {
     parent = std::move(decision);
   }
+  ~DecisionNode();
 
   /* The depth in the tree. */
   int depth;
@@ -247,9 +249,15 @@ public:
 
   RFSCScheduler &get_scheduler() { return *scheduler; }
 
+  /* Some statistics */
+  static StatCounter graph_cache_size;
+
 private:
   std::unique_ptr<RFSCScheduler> scheduler;
 };
 
+inline DecisionNode::~DecisionNode() {
+    if (cache_initialised) RFSCDecisionTree::graph_cache_size.sub(1);
+}
 
 #endif

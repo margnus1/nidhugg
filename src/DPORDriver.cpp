@@ -235,7 +235,11 @@ void DPORDriver::print_progress(uint64_t computation_count, long double estimate
     if(res.assume_blocked_trace_count)
       llvm::dbgs() << ", " << res.assume_blocked_trace_count << " ab";
     if(tasks_left != -1)
-      llvm::dbgs() << " (" << tasks_left << " jobs)";
+      llvm::dbgs() << " (" << tasks_left << " jobs, "
+                   << RFSCDecisionTree::graph_cache_size.read() << " graphs)";
+    else if (conf.dpor_algorithm == Configuration::READS_FROM)
+      llvm::dbgs() << " (" << RFSCDecisionTree::graph_cache_size.read() << " graphs)";
+
     if(conf.print_progress_estimate){
       std::stringstream ss;
       ss << std::setprecision(LDBL_DIG) << estimate;
