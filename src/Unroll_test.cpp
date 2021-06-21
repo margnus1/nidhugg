@@ -487,6 +487,72 @@ done:
   delete mod;
 }
 
+BOOST_AUTO_TEST_CASE(Unroll_blacklist){
+  Configuration conf = DPORDriver_test::get_sc_conf();
+  Configuration tconf;
+  tconf.transform_loop_unroll = 2;
+  tconf.transform_loop_unroll_blacklist = {"init"};
+  std::unique_ptr<DPORDriver> tdriver
+      (DPORDriver::parseIR(Transform::transform(R"(
+@x = global i32 0, align 4
+
+define i8* @f(i8* %arg) {
+entry:
+  br label %do.body
+
+do.body:
+  br label %do.cond
+
+do.cond:
+  br i1 1, label %land.rhs, label %land.end
+
+land.rhs:
+  store i32 1, i32* @x, align 4
+  br label %land.end
+
+land.end:
+  %E = phi i1 [ false, %do.cond ], [ true, %land.rhs ]
+  br i1 %E, label %do.body, label %do.end
+
+do.end:
+  ret i8* null
+}
+
+define void @init(){
+entry:
+  br label %head
+
+head:
+  %cnt = phi i32 [ 3, %entry ], [ %cnt.dec, %body ]
+  %cnt.dec = sub i32 %cnt, 1
+  %ic = icmp slt i32 %cnt.dec, 0
+  br i1 %ic, label %exit, label %body
+
+body:
+  store i32 0, i32* @x, align 4
+  br label %head
+
+exit:
+  ret void
+}
+
+define i32 @main(){
+  call void @init()
+  call i32 @pthread_create(i64* null, %attr_t* null, i8*(i8*)* @f, i8* null)
+  store i32 1, i32* @x, align 4
+  ret i32 0
+}
+
+%attr_t = type {i64, [48 x i8]}
+declare i32 @pthread_create(i64*, %attr_t*, i8*(i8*)*, i8*) nounwind
+)",tconf),conf));
+
+  DPORDriver::Result tres = tdriver->run();
+  BOOST_CHECK(!tres.has_errors());
+  BOOST_CHECK_EQUAL(tres.trace_count + tres.assume_blocked_trace_count,
+                    3);
+}
+
 BOOST_AUTO_TEST_SUITE_END()
 
 #endif
