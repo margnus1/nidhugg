@@ -38,6 +38,9 @@ bool SymEv::is_compatible_with(SymEv other) const {
     }
   }
   switch(kind) {
+  case LOCAL_STORE: case STORE_COMMIT:
+    if (arg2.num != other.arg2.num) return false;
+    /* fallthrough */
   case LOAD:
   case M_INIT: case M_LOCK: case M_UNLOCK: case M_DELETE:
   case M_TRYLOCK: case M_TRYLOCK_FAIL:
@@ -51,7 +54,7 @@ bool SymEv::is_compatible_with(SymEv other) const {
   case NONDET:
     if (arg.num != other.arg.num) return false;
     break;
-  case FULLMEM:
+  case FULLMEM: case FENCE:
   case NONE:
     break;
   default:
@@ -77,6 +80,13 @@ static std::string block_to_string(const SymData::block_type &blk, unsigned size
   return res.str();
 }
 
+static std::string fence_kind_to_string(enum SymEv::fence_kind kind) {
+  switch(kind) {
+  case SymEv::fence_kind::FULL: return "FULL";
+  }
+  abort();
+};
+
 std::string SymEv::to_string(std::function<std::string(int)> pid_str) const {
     switch(kind) {
     case NONE:     return "None()";
@@ -85,7 +95,14 @@ std::string SymEv::to_string(std::function<std::string(int)> pid_str) const {
     case LOAD:     return "Load("    + arg.addr.to_string(pid_str) + ")";
     case STORE:    return "Store("   + arg.addr.to_string(pid_str)
         + "," + block_to_string(_written, arg.addr.size) + ")";
+    case LOCAL_STORE: return "LocalStore(" + arg.addr.to_string(pid_str) + ","
+        + block_to_string(_written, arg.addr.size) + ","
+        + std::to_string(arg2.num) + ")";
+    case STORE_COMMIT: return "StoreCommit(" + arg.addr.to_string(pid_str) + ","
+        + block_to_string(_written, arg.addr.size) + ","
+        + std::to_string(arg2.num) + ")";
     case FULLMEM:  return "Fullmem()";
+    case FENCE:    return "Fence(" + fence_kind_to_string(arg.kind) + ")";
 
     case M_INIT:   return "MInit("   + arg.addr.to_string(pid_str) + ")";
     case M_LOCK:   return "MLock("   + arg.addr.to_string(pid_str) + ")";
@@ -127,6 +144,7 @@ std::string SymEv::to_string(std::function<std::string(int)> pid_str) const {
 bool SymEv::has_addr() const {
   switch(kind) {
   case LOAD: case STORE:
+  case LOCAL_STORE: case STORE_COMMIT:
   case M_INIT: case M_LOCK: case M_UNLOCK: case M_DELETE:
   case M_TRYLOCK: case M_TRYLOCK_FAIL:
   case C_INIT: case C_SIGNAL: case C_BRDCST: case C_DELETE:
@@ -135,7 +153,7 @@ bool SymEv::has_addr() const {
   case RMW: case CMPXHG: case CMPXHGFAIL:
     return true;
   case NONE:
-  case FULLMEM: case NONDET:
+  case FULLMEM: case FENCE: case NONDET:
   case SPAWN: case JOIN:
     return false;
   }
@@ -149,8 +167,9 @@ bool SymEv::has_num() const {
     return true;
   case NONE:
   case C_WAIT: case C_AWAKE:
-  case FULLMEM:
+  case FULLMEM: case FENCE:
   case LOAD: case STORE:
+  case LOCAL_STORE: case STORE_COMMIT:
   case M_INIT: case M_LOCK: case M_UNLOCK: case M_DELETE:
   case M_TRYLOCK: case M_TRYLOCK_FAIL:
   case C_INIT: case C_SIGNAL: case C_BRDCST: case C_DELETE:
@@ -164,13 +183,14 @@ bool SymEv::has_num() const {
 bool SymEv::has_data() const {
   switch(kind) {
   case STORE: case UNOBS_STORE:
+  case LOCAL_STORE: case STORE_COMMIT:
   case RMW: case CMPXHG: case CMPXHGFAIL:
     return (bool)_written;
   case NONE:
   case SPAWN: case JOIN:
   case NONDET:
   case C_WAIT: case C_AWAKE:
-  case FULLMEM:
+  case FULLMEM: case FENCE:
   case LOAD:
   case M_INIT: case M_LOCK: case M_UNLOCK: case M_DELETE:
   case M_TRYLOCK: case M_TRYLOCK_FAIL:
@@ -188,9 +208,10 @@ bool SymEv::has_expected() const {
   case SPAWN: case JOIN:
   case NONDET:
   case C_WAIT: case C_AWAKE:
-  case FULLMEM:
+  case FULLMEM: case FENCE:
   case LOAD:
   case STORE: case UNOBS_STORE:
+  case LOCAL_STORE: case STORE_COMMIT:
   case M_INIT: case M_LOCK: case M_UNLOCK: case M_DELETE:
   case M_TRYLOCK: case M_TRYLOCK_FAIL:
   case C_INIT: case C_SIGNAL: case C_BRDCST: case C_DELETE:

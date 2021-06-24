@@ -38,11 +38,15 @@ struct SymEv {
 
     LOAD,
     STORE,
+    LOCAL_STORE,
+    STORE_COMMIT,
     FULLMEM, /* Observe & clobber everything */
 
     RMW,
     CMPXHG,
     CMPXHGFAIL,
+
+    FENCE,
 
     M_INIT,
     M_LOCK,
@@ -63,22 +67,29 @@ struct SymEv {
 
     UNOBS_STORE,
   } kind;
+  enum class fence_kind {
+    FULL,
+  };
   union arg {
   public:
     SymAddrSize addr;
     int num;
+    fence_kind kind;
 
     arg() {}
     arg(SymAddrSize addr) : addr(addr) {}
     arg(int num) : num(num) {}
+    arg(fence_kind kind) : kind(kind) {}
     // ~arg_union() {}
   } arg;
   union arg2 {
   public:
     RmwAction::Kind rmw_kind;
+    int num;
 
     arg2() {}
     arg2(RmwAction::Kind kind) : rmw_kind(kind) {}
+    arg2(int num) : num(num) {}
   } arg2;
   bool _rmw_result_used;
   SymData::block_type _expected, _written;
@@ -89,6 +100,12 @@ struct SymEv {
 
   static SymEv Load(SymAddrSize addr) { return {LOAD, addr}; }
   static SymEv Store(SymData addr) { return {STORE, std::move(addr)}; }
+  static SymEv LocalStore(SymData addr, int num) {
+    return {LOCAL_STORE, std::move(addr), num};
+  }
+  static SymEv StoreCommit(SymData addr, int num) {
+    return {STORE_COMMIT, std::move(addr), num};
+  }
   static SymEv Rmw(SymData addr, RmwAction action) {
     assert(addr.get_block());
     return {RMW, std::move(addr), std::move(action)};
@@ -100,6 +117,7 @@ struct SymEv {
     return {CMPXHGFAIL, addr, expected};
   }
   static SymEv Fullmem() { return {FULLMEM, {}}; }
+  static SymEv Fence(fence_kind kind) { return {FENCE, {kind}}; }
 
   static SymEv MInit(SymAddrSize addr) { return {M_INIT, addr}; }
   static SymEv MLock(SymAddrSize addr) { return {M_LOCK, addr}; }
@@ -131,12 +149,15 @@ struct SymEv {
 
   bool has_addr() const;
   bool has_num() const;
+  bool has_num2() const { return kind == LOCAL_STORE || kind == STORE_COMMIT; }
   bool has_data() const;
   bool has_expected() const;
   bool has_rmwaction() const { return kind == RMW; }
+  bool has_fence_kind() const { return kind == FENCE; }
   bool empty() const { return kind == NONE; }
   const SymAddrSize &addr()   const { assert(has_addr()); return arg.addr; }
-        int          num()    const { assert(has_num()); return arg.num; }
+	int          num()    const { assert(has_num());  return arg.num; }
+	int          num2()   const { assert(has_num2()); return arg2.num; }
   SymData data() const { assert(has_data()); return {arg.addr, _written}; }
   SymData expected() const {
     assert(has_expected());
@@ -155,6 +176,7 @@ struct SymEv {
     assert(has_rmwaction());
     return _rmw_result_used;
   }
+  fence_kind fence_kind() const { return arg.kind; }
 
   void purge_data();
   void set_observed(bool observed);
@@ -172,6 +194,11 @@ private:
     : kind(kind), arg(addr_written.get_ref()), arg2(action.kind),
       _rmw_result_used(action.result_used),
       _expected(std::move(action.operand)),
+      _written(std::move(addr_written.get_shared_block())) {
+      assert(has_data());
+    };
+  SymEv(enum kind kind, SymData addr_written, int num)
+    : kind(kind), arg(addr_written.get_ref()), arg2(num),
       _written(std::move(addr_written.get_shared_block())) {
       assert(has_data());
     };
