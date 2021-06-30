@@ -111,15 +111,15 @@ protected:
   /* A store pending in a store buffer. */
   class PendingStore{
   public:
-    PendingStore(const SymAddrSize &ml, unsigned store_event,
-                 const llvm::MDNode *md)
-      : ml(ml), store_event(store_event), last_rowe(-1), md(md) {};
+    PendingStore(const SymAddrSize &ml, const llvm::MDNode *md,
+                 unsigned store_event_index)
+      : ml(ml), last_rowe(-1), md(md), store_event_index(store_event_index) {};
     /* The memory location that is being written to. */
     SymAddrSize ml;
-    /* The index into prefix of the store event that produced this store
-     * buffer entry.
-     */
-    unsigned store_event;
+    // /* The index into prefix of the store event that produced this store
+    //  * buffer entry.
+    //  */
+    // unsigned store_event;
     /* An index into prefix to the event of the last load that fetched
      * its value from this store buffer entry by Read-Own-Write-Early.
      *
@@ -130,6 +130,10 @@ protected:
      * entry.
      */
     const llvm::MDNode *md;
+    /* The index of the main thread store event that produced this store
+     * buffer entry.
+     */
+    unsigned store_event_index;
   };
 
   /* Various information about a thread in the current execution.

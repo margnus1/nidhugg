@@ -633,17 +633,28 @@ bool TSOTraceBuilder::spawn(){
 }
 
 bool TSOTraceBuilder::store(const SymData &sd){
+  IPid ipid = curev().iid.get_pid();
+  IPid iidx = curev().iid.get_index();
+  if (!record_symbolic(SymEv::LocalStore(sd,iidx))) return false;
   if(dryrun) return true;
   curev().may_conflict = true; /* prefix_idx might become bad otherwise */
-  IPid ipid = curev().iid.get_pid();
-  threads[ipid].store_buffer.push_back(PendingStore(sd.get_ref(),prefix_idx,last_md));
+  threads[ipid].store_buffer.push_back(PendingStore(sd.get_ref(),last_md, iidx));
   threads[ipid+1].available = true;
   return true;
 }
 
 bool TSOTraceBuilder::atomic_store(const SymData &sd){
+  IPid ipid = curev().iid.get_pid();
+  bool is_update = ipid % 2;
   if (conf.dpor_algorithm == Configuration::OBSERVERS) {
     if (!record_symbolic(SymEv::UnobsStore(sd))) return false;
+  } else if (is_update) {
+    assert(conf.memory_model == Configuration::TSO);
+    IPid tipid = ipid-1; // ID of the (real) thread that issued the store
+    assert(threads[tipid].store_buffer.size());
+    const PendingStore &pst = threads[tipid].store_buffer.front();
+    if (!record_symbolic(SymEv::StoreCommit(sd, pst.store_event_index)))
+      return false;
   } else {
     if (!record_symbolic(SymEv::Store(sd))) return false;
   }
@@ -652,11 +663,13 @@ bool TSOTraceBuilder::atomic_store(const SymData &sd){
 }
 
 static bool symev_is_store(const SymEv &e) {
-  return e.kind == SymEv::UNOBS_STORE || e.kind == SymEv::STORE;
+  return e.kind == SymEv::UNOBS_STORE || e.kind == SymEv::STORE
+    || e.kind == SymEv::STORE_COMMIT;
 }
 
 static bool symev_does_store(const SymEv &e) {
   return e.kind == SymEv::UNOBS_STORE || e.kind == SymEv::STORE
+    || e.kind == SymEv::STORE_COMMIT
     || e.kind == SymEv::CMPXHG || e.kind == SymEv::RMW;
 }
 
@@ -701,9 +714,10 @@ void TSOTraceBuilder::do_atomic_store(const SymData &sd){
   if(is_update){ // Add the clock of the store instruction
     assert(threads[tipid].store_buffer.size());
     const PendingStore &pst = threads[tipid].store_buffer.front();
-    assert(pst.store_event != (unsigned)prefix_idx);
-    add_happens_after(prefix_idx, pst.store_event);
-    curev().origin_iid = prefix[pst.store_event].iid;
+    curev().origin_iid = IID<IPid>(tipid, pst.store_event_index);
+    unsigned store_event = find_process_event(tipid, pst.store_event_index);
+    assert(store_event != (unsigned)prefix_idx);
+    add_happens_after(prefix_idx, store_event);
     curev().md = pst.md;
   }else{ // Add the clock of the auxiliary thread (because of fence semantics)
     assert(threads[tipid].store_buffer.empty());
@@ -1601,6 +1615,10 @@ static void rev_recompute_data
         }
       }
       break;
+    case SymEv::STORE_COMMIT:
+    case SymEv::LOCAL_STORE:
+      assert(false && "TSO Semantics not implemented for rev_recompute_data");
+      abort();
     default:
       assert(!symev_does_store(p));
       break;
@@ -1984,6 +2002,14 @@ bool TSOTraceBuilder::do_symevs_conflict
                             snd.rmw_kind(), snd.rmw_result_used())) {
     return false;
   }
+  if (fst.kind == SymEv::LOCAL_STORE)
+    return snd.kind == SymEv::STORE_COMMIT && snd_pid == fst_pid+1
+      && fst.num2() == snd.num2();
+  if (snd.kind == SymEv::LOCAL_STORE)
+    return fst.kind == SymEv::STORE_COMMIT && fst_pid == snd_pid+1
+      && snd.num2() == fst.num2();
+  if ((fst.kind == SymEv::STORE_COMMIT && fst_pid == snd_pid+1)
+      || (snd.kind == SymEv::STORE_COMMIT && snd_pid == fst_pid+1)) return false;
 
   /* Really crude. Is it enough? */
   if (fst.has_addr()) {
