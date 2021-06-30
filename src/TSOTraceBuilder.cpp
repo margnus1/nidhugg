@@ -576,6 +576,7 @@ void TSOTraceBuilder::check_symev_vclock_equiv() const {
 void TSOTraceBuilder::debug_print() const {
   llvm::dbgs() << "TSOTraceBuilder (debug print):\n";
   int iid_offs = 0;
+  int vclock_offs = 0;
   int symev_offs = 0;
   std::vector<std::string> lines;
   struct obs_sleep sleep_set;
@@ -583,6 +584,8 @@ void TSOTraceBuilder::debug_print() const {
   for(unsigned i = 0; i < prefix.len(); ++i){
     IPid ipid = prefix[i].iid.get_pid();
     iid_offs = std::max(iid_offs,2*ipid+int(iid_string(i).size()));
+    vclock_offs = std::max(vclock_offs,
+                           int(prefix[i].clock.to_string().size()));
     symev_offs = std::max(symev_offs,
                           int(events_to_string(prefix[i].sym).size()));
     obs_sleep_add(sleep_set, prefix[i]);
@@ -606,6 +609,7 @@ void TSOTraceBuilder::debug_print() const {
     IPid ipid = prefix[i].iid.get_pid();
     llvm::dbgs() << rpad("",2+ipid*2)
                  << rpad(iid_string(i),iid_offs-ipid*2)
+                 << " " << rpad(prefix[i].clock.to_string(),vclock_offs)
                  << " " << rpad(events_to_string(prefix[i].sym),symev_offs)
                  << lines[i] << "\n";
   }
@@ -1990,7 +1994,7 @@ static bool symev_is_unobs_store(const SymEv &e) {
 
 bool TSOTraceBuilder::do_symevs_conflict
 (IPid fst_pid, const SymEv &fst,
- IPid snd_pid, const SymEv &snd) const {
+ IPid snd_pid, const SymEv &snd, sym_state snd_state) const {
   if (fst.kind == SymEv::NONDET || snd.kind == SymEv::NONDET) return false;
   if (fst.kind == SymEv::FULLMEM || snd.kind == SymEv::FULLMEM) return true;
   if (symev_is_load(fst) && symev_is_load(snd)) return false;
@@ -2025,18 +2029,27 @@ bool TSOTraceBuilder::do_symevs_conflict
 
 bool TSOTraceBuilder::do_events_conflict
 (IPid fst_pid, const sym_ty &fst,
- IPid snd_pid, const sym_ty &snd) const{
+ IPid snd_pid, const sym_ty &snd, sym_state snd_state) const{
   if (fst_pid == snd_pid) return true;
-  for (const SymEv &fe : fst) {
-    if (symev_has_pid(fe) && fe.num() == (snd_pid / 2)) return true;
-    for (const SymEv &se : snd) {
-      if (do_symevs_conflict(fst_pid, fe, snd_pid, se)) {
+  // for (const SymEv &fe : fst) {
+  //   if (symev_has_pid(fe) && fe.num() == (snd_pid / 2)) return true;
+  //   for (const SymEv &se : snd) {
+  //     if (do_symevs_conflict(fst_pid, fe, snd_pid, se)) {
+  //       return true;
+  //     }
+  //   }
+  // }
+  for (const SymEv &se : snd) {
+    if (symev_has_pid(se) && se.num() == (fst_pid / 2)) return true;
+    for (const SymEv &fe : fst) {
+      if (do_symevs_conflict(fst_pid, fe, snd_pid, se, snd_state)) {
         return true;
       }
     }
+    sym_state_step(se, snd_state);
   }
-  for (const SymEv &se : snd) {
-    if (symev_has_pid(se) && se.num() == (fst_pid / 2)) return true;
+  for (const SymEv &fe : fst) {
+    if (symev_has_pid(fe) && fe.num() == (snd_pid / 2)) return true;
   }
   return false;
 }

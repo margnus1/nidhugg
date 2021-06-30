@@ -26,6 +26,8 @@
 #include "SymEv.h"
 #include "WakeupTrees.h"
 #include "Option.h"
+#include "GenMap.h"
+#include "GenSet.h"
 
 #include <boost/container/flat_map.hpp>
 
@@ -579,14 +581,25 @@ protected:
    * to aquire mutex m, which is held by the lock event event.
    */
   void add_lock_fail_race(const Mutex &m, int event);
+
+  struct sym_state {
+    /* Only non-empty in TSO memory model */
+    gen::map<IPid,gen::set<SymAddr>> write_buffers;
+  };
+  void sym_state_step(const sym_ty &sym, sym_state &state) const;
+  void sym_state_step(const SymEv &sym, sym_state &state) const;
+
   /* Check if two events in the current prefix are in conflict. */
-  bool do_events_conflict(int i, int j) const;
-  bool do_events_conflict(const Event &fst, const Event &snd) const;
+  bool do_events_conflict(int i, int j, sym_state state) const;
+  bool do_events_conflict(const Event &fst, const Event &snd,
+                          sym_state snd_state) const;
   /* Check if two symbolic events conflict. */
   bool do_events_conflict(IPid fst_pid, const sym_ty &fst,
-                          IPid snd_pid, const sym_ty &snd) const;
+                          IPid snd_pid, const sym_ty &snd,
+                          sym_state snd_state) const;
   bool do_symevs_conflict(IPid fst_pid, const SymEv &fst,
-                          IPid snd_pid, const SymEv &snd) const;
+                          IPid snd_pid, const SymEv &snd,
+                          sym_state snd_state) const;
   /* Check if events fst and snd are in an observed race with thd as an
    * observer.
    */

@@ -73,4 +73,13 @@ private:
   };
 };
 
+template<typename Value> const Option<Value> &operator||
+(const Option<Value> &lhs, const Option<Value> &rhs) { return lhs ? lhs : rhs; }
+template<typename Value> Option<Value> & operator||
+(Option<Value> &lhs, Option<Value> &rhs) { return lhs ? lhs : rhs; }
+template<typename Value>
+Option<Value> && operator||(Option<Value> &&lhs, Option<Value> &&rhs) {
+  return lhs ? std::move(lhs) : std::move(rhs);
+}
+
 #endif
