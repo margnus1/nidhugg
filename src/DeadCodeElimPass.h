@@ -39,7 +39,7 @@ public:
   llvm::StringRef getPassName() const override { return "DeadCodeElimPass"; } ;
 #else
   const char *getPassName() const override { return "DeadCodeElimPass"; };
-#endif  
+#endif
 private:
 };
 

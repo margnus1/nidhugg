@@ -1,7 +1,9 @@
+// nidhuggc: -sc -rf -no-assume-await
 /* A version of the SafeStack benchmark from SCTBench where pure loops
- * have been manually pruned with __VERIFIER_assume calls, and a macro
- * parameter N has been introduced for reducing the size of the
- * benchmark. A value of N=3,3,3 corresponds to the original.
+ * have been manually pruned with __VERIFIER_assume calls, the
+ * double-load of head been removed from Push(), and a macro parameter N
+ * has been introduced for reducing the size of the benchmark. A value
+ * of N=4,4,4 corresponds to the original.
  *
  * Here, N=2,1 by default to reproduce an implementation bug of RMWs in
  * RF-SMC. Correct reads-from trace count for N=2,1 is 36.
@@ -56,7 +58,7 @@ void Init(int pushCount) {
 int Pop(void) {
     while (true) {
 	__VERIFIER_assume(atomic_load(&stack.count) > 1);
-	
+
 	int head1 = atomic_load(&stack.head);
         int next1 = atomic_exchange(&stack.array[head1].Next, -1);
 

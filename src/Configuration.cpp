@@ -209,15 +209,15 @@ void Configuration::assign_by_commandline(){
   dpor_algorithm = cl_dpor_algorithm;
   check_robustness = cl_check_robustness;
   transform_spin_assume = !cl_transform_no_spin_assume;
-  transform_assume_await = !cl_transform_no_assume_await;
   transform_dead_code_elim = !cl_transform_no_dead_code_elim;
+  transform_assume_await = !cl_transform_no_assume_await;
   transform_loop_unroll = cl_transform_loop_unroll;
   if (cl_verifier_nondet_int.getNumOccurrences())
     svcomp_nondet_int = (int)cl_verifier_nondet_int;
   print_progress = cl_print_progress || cl_print_progress_estimate;
   print_progress_estimate = cl_print_progress_estimate;
   debug_print_on_reset = cl_debug_print_on_reset;
-  commute_rmws = !cl_no_commute_rmws;
+  commute_rmws = !cl_no_commute_rmws && memory_model == SC;
   // sat_solver = cl_sat;
   argv.resize(1);
   argv[0] = get_default_program_name();

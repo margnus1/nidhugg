@@ -182,10 +182,10 @@ public:
   bool debug_print_on_error;
   /* In module transformation, enable the SpinAssume pass. */
   bool transform_spin_assume;
-  /* In module transformation, enable the AssumeAwait pass. */
-  bool transform_assume_await;
   /* In module transformation, enable the DeadCodeElim pass. */
   bool transform_dead_code_elim = true;
+  /* In module transformation, enable the AssumeAwait pass. */
+  bool transform_assume_await;
   /* If transform_loop_unroll is non-negative, in module
    * transformation, enable loop unrolling with depth
    * transform_loop_unroll.
@@ -194,7 +194,7 @@ public:
   /* Number to return from __VERIFIER_nondet_u?int() */
   Option<int> svcomp_nondet_int;
   /* If set, rmws are allowed to commute. */
-  bool commute_rmws = true;
+  bool commute_rmws = false;
   /* If set, DPORDriver will continually print its progress to stdout. */
   bool print_progress;
   /* If set and print_progress is set, DPORDriver will together with

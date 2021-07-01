@@ -23,6 +23,8 @@
 #define __TSO_PSO_TRACE_BUILDER_H__
 
 #include "Configuration.h"
+#include "SymAddr.h"
+#include "RMWAction.h"
 #include "AwaitCond.h"
 #include "Trace.h"
 #include "DetCheckTraceBuilder.h"

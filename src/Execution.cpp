@@ -1447,6 +1447,12 @@ void Interpreter::visitAnyCallInst(AnyCallInst CI) {
         return;
       }
     }
+  } else if (!F) {
+    // To handle indirect calls, we must get the pointer value from the argument
+    // and treat it as a function pointer.
+    GenericValue SRC = getOperandValue(CI.getCalledOperand(), SF);
+    F = (Function*)GVTOP(SRC);
+    if (!ValidateFunctionPointer(F)) return;
   }
 
 
@@ -1461,10 +1467,7 @@ void Interpreter::visitAnyCallInst(AnyCallInst CI) {
     ArgVals.push_back(getOperandValue(V, SF));
   }
 
-  // To handle indirect calls, we must get the pointer value from the argument
-  // and treat it as a function pointer.
-  GenericValue SRC = getOperandValue(SF.Caller.getCalledOperand(), SF);
-  callFunction((Function*)GVTOP(SRC), ArgVals);
+  callFunction(F, ArgVals);
 }
 
 // auxilary function for shift operations
@@ -2443,6 +2446,9 @@ void Interpreter::callPthreadCreate(Function *F,
   Result.IntVal = APInt(F->getReturnType()->getIntegerBitWidth(),0);
   returnValueToCaller(F->getReturnType(),Result);
 
+  Function *F_inner = (Function*)GVTOP(ArgVals[2]);
+  if (!ValidateFunctionPointer(F_inner)) return;
+
   // Save thread ID to the location pointed to by the first argument
   {
     int new_tid = Threads.size();
@@ -2471,7 +2477,6 @@ void Interpreter::callPthreadCreate(Function *F,
 
   // Build stack frame for the call
   // XXX: No validation on argument value!
-  Function *F_inner = (Function*)GVTOP(ArgVals[2]);
   std::vector<GenericValue> ArgVals_inner;
   if(F_inner->arg_size() == 1 &&
      F_inner->arg_begin()->getType() == Type::getInt8PtrTy(F->getContext())){
@@ -3023,7 +3028,9 @@ void Interpreter::callFree(Function *F,
 
 void Interpreter::callAtexit(Function *F,
                              const std::vector<GenericValue> &ArgVals){
-  addAtExitHandler((Function*)GVTOP(ArgVals[0]));
+  Function *Handler = (Function*)GVTOP(ArgVals[0]);
+  if (!ValidateFunctionPointer(Handler)) return;
+  addAtExitHandler(Handler);
   GenericValue Result;
   Result.IntVal = APInt(F->getReturnType()->getIntegerBitWidth(),0);
   returnValueToCaller(F->getReturnType(),Result);
@@ -3145,6 +3152,7 @@ void Interpreter::CheckAwaitWakeup(const GenericValue &Val, const void *ptr,
 //
 void Interpreter::callFunction(Function *F,
                                const std::vector<GenericValue> &ArgVals) {
+  assert(F && "Caller should validate F");
   if(F->getName().str() == "pthread_create"){
     callPthreadCreate(F,ArgVals);
     return;
@@ -3526,6 +3534,15 @@ Option<SymAddr> Interpreter::GetSymAddr(void *Ptr) {
     abort();
   }
   return ret;
+}
+
+bool Interpreter::ValidateFunctionPointer(Function *F) {
+  if (!F) {
+    TB.segmentation_fault_error();
+    abort();
+    return false;
+  }
+  return true;
 }
 
 void Interpreter::run() {

@@ -54,10 +54,15 @@ mutex_vs_trylock_1 Forbid : 3
 mutex_vs_trylock_2 Forbid : 16
 rmw_test2 Forbid : 300
 fib_bench_true_2 Forbid : 140
+safestack_c21_21 Forbid : 36
+safestack_c21_21_opt Forbid : 36
+
+# Unroller
+unroll_double_loop Forbid : 1
+
 # We disable await benchmarks that do not yet achive the right trace counts for
 # now
 # simplified_dekker Forbid : 3
-safestack_c21_21 Forbid : 36
 broken_mutual_exclusion Forbid : 3
 revealed_write Forbid : 2
 # revealed_write_reverse Forbid : 2
@@ -76,7 +81,6 @@ await_muddier Forbid : 4
 
 # Optimal/Observers with load-await
 simplified_dekker_opt Forbid : 3
-safestack_c21_21_opt Forbid : 36
 broken_mutual_exclusion_opt Forbid : 4
 broken_mutual_exclusion_obs Forbid : 3
 revealed_write_opt Forbid : 2

@@ -19,7 +19,6 @@
 
 #include <config.h>
 
-#include <llvm/IR/ValueMap.h>
 #include <llvm/ADT/SmallPtrSet.h>
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/Analysis/ValueTracking.h>

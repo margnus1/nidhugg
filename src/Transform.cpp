@@ -20,8 +20,8 @@
 #include "AddLibPass.h"
 #include "LoopUnrollPass.h"
 #include "SpinAssumePass.h"
-#include "AssumeAwaitPass.h"
 #include "DeadCodeElimPass.h"
+#include "AssumeAwaitPass.h"
 #include "StrModule.h"
 #include "Transform.h"
 
@@ -100,6 +100,11 @@ namespace Transform {
     using PassManager = llvm::PassManager;
 #endif
     PassManager PM;
+    /* The unroller is currently not safe to run after SSA
+     * transformation, so we run it before everything else. spin-assume
+     * should come before the unroller, so we also run it here if loop
+     * unrolling is enabled.
+     */
     if(conf.transform_loop_unroll >= 0){
       if(conf.transform_spin_assume) {
         PM.add(new SpinAssumePass());
@@ -124,7 +129,7 @@ namespace Transform {
     }
     PM.add(new AddLibPass());
     bool modified = PM.run(mod);
-    assert(!llvm::verifyModule(mod));
+    assert(!llvm::verifyModule(mod, &llvm::dbgs()));
     return modified;
   }
 

@@ -59,31 +59,4 @@ struct AwaitCond {
   bool satisfied_by(const void *data, std::size_t size) const;
 };
 
-struct RmwAction {
-  SymData::block_type operand;
-  enum Kind : uint8_t {
-    XCHG = 1,
-    ADD,
-    SUB,
-    AND,
-    NAND,
-    OR,
-    XOR,
-    MAX,
-    MIN,
-    UMAX,
-    UMIN,
-  } kind;
-  bool result_used;
-
-  RmwAction(Kind kind, SymData::block_type operand, bool result_used)
-    : operand(std::move(operand)), kind(kind), result_used(result_used) {}
-
-  static const char *name(Kind op);
-
-  /* Computes the result of this rmw action when given data as input */
-  void apply_to(SymData &dst, const SymData &data);
-  void apply_to(void *dst, std::size_t size, void *data);
-};
-
 #endif
