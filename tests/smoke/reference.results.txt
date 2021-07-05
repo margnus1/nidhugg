@@ -112,5 +112,12 @@ await_vs_indep_inc_easy Forbid : 3
 # Optimal/Observers with commuting rmws
 safestack_c21_21_opt_rmwcomm Forbid : 21
 
+# Tests for the partial-loop-purity transformation pass. These should pass (1
+# trace)
+plptest_fully_pure Forbid : 4
+plptest_spinloop Forbid : 4
+# These should fail (>1 trace)
+plptest_leaky_counter Forbid : 4
+
 # Total number of traces: 1116
 # Total running time: 9.51 s
