@@ -21,6 +21,7 @@
 #include "LoopUnrollPass.h"
 #include "SpinAssumePass.h"
 #include "DeadCodeElimPass.h"
+#include "PartialLoopPurityPass.h"
 #include "AssumeAwaitPass.h"
 #include "StrModule.h"
 #include "Transform.h"
@@ -106,6 +107,9 @@ namespace Transform {
      * unrolling is enabled.
      */
     if(conf.transform_loop_unroll >= 0){
+      if (conf.transform_partial_loop_purity) {
+        PM.add(new PartialLoopPurityPass());
+      }
       if(conf.transform_spin_assume) {
         PM.add(new SpinAssumePass());
       }
@@ -121,8 +125,13 @@ namespace Transform {
     if (conf.transform_dead_code_elim) {
       PM.add(new DeadCodeElimPass());
     }
-    if(conf.transform_spin_assume && conf.transform_loop_unroll < 0){
-      PM.add(new SpinAssumePass());
+    if (conf.transform_loop_unroll < 0) {
+      if (conf.transform_partial_loop_purity) {
+        PM.add(new PartialLoopPurityPass());
+      }
+      if(conf.transform_spin_assume){
+        PM.add(new SpinAssumePass());
+      }
     }
     if(conf.transform_assume_await){
       PM.add(new AssumeAwaitPass());

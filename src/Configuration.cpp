@@ -120,6 +120,11 @@ static llvm::cl::opt<bool> cl_transform_no_dead_code_elim
  llvm::cl::desc("Disable the dead code elimination pass in module\n"
                 "transformation."));
 
+static llvm::cl::opt<bool> cl_transform_no_partial_loop_purity
+("no-partial-loop-purity",llvm::cl::NotHidden,llvm::cl::cat(cl_transformation_cat),
+ llvm::cl::desc("Disable the partial loop purity bounding pass in module\n"
+                "transformation."));
+
 static llvm::cl::opt<int>
 cl_transform_loop_unroll("unroll",
                          llvm::cl::NotHidden,llvm::cl::init(-1),llvm::cl::value_desc("N"),
@@ -183,6 +188,7 @@ const std::set<std::string> &Configuration::commandline_opts(){
     "source","optimal","observers","rf",
     "check-robustness",
     "no-spin-assume",
+    "no-partial-loop-purity",
     "no-assume-await",
     "unroll",
     "print-progress",
@@ -210,6 +216,7 @@ void Configuration::assign_by_commandline(){
   check_robustness = cl_check_robustness;
   transform_spin_assume = !cl_transform_no_spin_assume;
   transform_dead_code_elim = !cl_transform_no_dead_code_elim;
+  transform_partial_loop_purity = !cl_transform_no_partial_loop_purity;
   transform_assume_await = !cl_transform_no_assume_await;
   transform_loop_unroll = cl_transform_loop_unroll;
   if (cl_verifier_nondet_int.getNumOccurrences())

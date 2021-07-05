@@ -26,6 +26,7 @@ nidhuggcparams = [
     {'name':'--clang','help':'Specify the path to clang.','param':'PATH'},
     {'name':'--clangxx','help':'Specify the path to clang++.','param':'PATH'},
     {'name':'--nidhugg','help':'Specify the path to the nidhugg binary.','param':'PATH'},
+    {'name':'--no-partial-loop-purity','help':'Don\'t reduce partially pure loops with assumes before calling nidhugg.','param':False},
     {'name':'--no-spin-assume','help':'Don\'t use the spin-assume transformation on module before calling nidhugg.','param':False},
     {'name':'--no-dead-code-elim','help':'Don\'t use the dead code elimination pass on module before calling nidhugg.','param':False},
     {'name':'--no-assume-await','help':'Don\'t use the assume-await transformation on module before calling nidhugg.','param':False},
@@ -48,6 +49,7 @@ nidhuggcparamaliases = {
     '-clang':'--clang',
     '-clangxx':'--clangxx',
     '-nidhugg':'--nidhugg',
+    '-no-partial-loop-purity':'--no-partial-loop-purity',
     '-no-spin-assume':'--no-spin-assume',
     '-no-dead-code-elim':'--no-dead-code-elim',
     '-no-assume-await':'--no-assume-await',
@@ -272,13 +274,18 @@ def main():
             elif argname == '--verbose':
                 verbose = True
             elif argname == '--gdb':
-                gdb = True
+                if argarg == "transform":
+                    transform_gdb = True
+                else:
+                    gdb = True
             elif argname == '--clang':
                 CLANG=argarg
             elif argname == '--clangxx':
                 CLANGXX=argarg
             elif argname == '--nidhugg':
                 NIDHUGG=argarg
+            elif argname == '--no-partial-loop-purity':
+                transformargs.append(argname)
             elif argname == '--no-spin-assume':
                 transformargs.append(argname)
             elif argname == '--no-dead-code-elim':
