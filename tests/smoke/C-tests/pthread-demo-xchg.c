@@ -1,3 +1,4 @@
+// nidhuggc: -sc -rf -no-assume-await
 /***********************************************************************************
                          C-DAC Tech Workshop : hyPACK-2013
                              October 15-18,2013
