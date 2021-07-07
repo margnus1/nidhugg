@@ -119,10 +119,10 @@ plptest_risk_of_segfault Forbid : 1
 plptest_spinloop Forbid : 4
 # Pasing tests with >1 trace
 plptest_safestack_21_easy Forbid : 13
+plptest_safestack_21_inlined Forbid : 13
 # These should fail (>1 trace)
 plptest_leaky_counter Forbid : 4
 # Currently failing, pass is >1 trace
-plptest_safestack_21_inlined Forbid : 19
 plptest_safestack_21_inlined_xchg Forbid : 54
 plptest_safestack_21 Forbid : 54
 

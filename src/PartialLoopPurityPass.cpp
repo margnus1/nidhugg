@@ -235,12 +235,94 @@ namespace {
   };
   typedef std::unordered_map<const llvm::BasicBlock*,PurityCondition> PurityConditions;
 
+  const char *getPredicateName(llvm::CmpInst::Predicate pred) {
+    using llvm::ICmpInst; using llvm::FCmpInst;
+    switch (pred) {
+    default:                   return "unknown";
+    case FCmpInst::FCMP_FALSE: return "false";
+    case FCmpInst::FCMP_OEQ:   return "oeq";
+    case FCmpInst::FCMP_OGT:   return "ogt";
+    case FCmpInst::FCMP_OGE:   return "oge";
+    case FCmpInst::FCMP_OLT:   return "olt";
+    case FCmpInst::FCMP_OLE:   return "ole";
+    case FCmpInst::FCMP_ONE:   return "one";
+    case FCmpInst::FCMP_ORD:   return "ord";
+    case FCmpInst::FCMP_UNO:   return "uno";
+    case FCmpInst::FCMP_UEQ:   return "ueq";
+    case FCmpInst::FCMP_UGT:   return "ugt";
+    case FCmpInst::FCMP_UGE:   return "uge";
+    case FCmpInst::FCMP_ULT:   return "ult";
+    case FCmpInst::FCMP_ULE:   return "ule";
+    case FCmpInst::FCMP_UNE:   return "une";
+    case FCmpInst::FCMP_TRUE:  return "true";
+    case ICmpInst::ICMP_EQ:    return "eq";
+    case ICmpInst::ICMP_NE:    return "ne";
+    case ICmpInst::ICMP_SGT:   return "sgt";
+    case ICmpInst::ICMP_SGE:   return "sge";
+    case ICmpInst::ICMP_SLT:   return "slt";
+    case ICmpInst::ICMP_SLE:   return "sle";
+    case ICmpInst::ICMP_UGT:   return "ugt";
+    case ICmpInst::ICMP_UGE:   return "uge";
+    case ICmpInst::ICMP_ULT:   return "ult";
+    case ICmpInst::ICMP_ULE:   return "ule";
+    }
+  }
+
+  llvm::Instruction::OtherOps getPredicateOpcode(llvm::CmpInst::Predicate pred) {
+    using llvm::ICmpInst; using llvm::FCmpInst;
+    switch (pred) {
+    case ICmpInst::BAD_ICMP_PREDICATE:
+    case FCmpInst::BAD_FCMP_PREDICATE:
+    default:
+      llvm::dbgs() << "Predicate " << pred << " unknown!\n";
+      assert(false && "unknown predicate"); abort();
+    case ICmpInst::ICMP_EQ:  case ICmpInst::ICMP_NE:
+    case ICmpInst::ICMP_SGT: case ICmpInst::ICMP_SGE:
+    case ICmpInst::ICMP_SLT: case ICmpInst::ICMP_SLE:
+    case ICmpInst::ICMP_UGT: case ICmpInst::ICMP_UGE:
+    case ICmpInst::ICMP_ULT: case ICmpInst::ICMP_ULE:
+      return llvm::Instruction::OtherOps::ICmp;
+    case FCmpInst::FCMP_FALSE: case FCmpInst::FCMP_TRUE:
+      assert(false && "Predicates false & true should not generate cmp insts");
+    case FCmpInst::FCMP_OEQ: case FCmpInst::FCMP_OGT:
+    case FCmpInst::FCMP_OGE: case FCmpInst::FCMP_OLT:
+    case FCmpInst::FCMP_OLE: case FCmpInst::FCMP_ONE:
+    case FCmpInst::FCMP_ORD: case FCmpInst::FCMP_UNO:
+    case FCmpInst::FCMP_UEQ: case FCmpInst::FCMP_UGT:
+    case FCmpInst::FCMP_UGE: case FCmpInst::FCMP_ULT:
+    case FCmpInst::FCMP_ULE: case FCmpInst::FCMP_UNE:
+      return llvm::Instruction::OtherOps::FCmp;
+    }
+  }
+
+  enum class Tristate {
+    FALSE,
+    TRUE,
+    MAYBE,
+  };
+
+  Tristate predicateSatisfiedOnEquality(llvm::CmpInst::Predicate pred) {
+    using llvm::ICmpInst; using llvm::FCmpInst;
+    switch (pred) {
+    case ICmpInst::ICMP_EQ:
+    case ICmpInst::ICMP_SGE: case ICmpInst::ICMP_SLE:
+    case ICmpInst::ICMP_UGE: case ICmpInst::ICMP_ULE:
+      return Tristate::TRUE;
+    case ICmpInst::ICMP_NE:
+    case ICmpInst::ICMP_SGT: case ICmpInst::ICMP_SLT:
+    case ICmpInst::ICMP_UGT: case ICmpInst::ICMP_ULT:
+      return Tristate::FALSE;
+    default:
+      return Tristate::MAYBE;
+    }
+  }
+
   llvm::raw_ostream &operator<<(llvm::raw_ostream &os, const PurityCondition &cond) {
     if (cond.pred.is_true()) os << "true";
     else if (cond.pred.is_false()) os << "false";
     else {
       cond.pred.lhs->printAsOperand(os);
-      os << " " << cond.pred.op << " ";
+      os << " " << getPredicateName(cond.pred.op) << " ";
       cond.pred.rhs->printAsOperand(os);
     }
     if (cond.insertion_point) {
@@ -287,6 +369,25 @@ namespace {
     }
   }
 
+  void maybeResolvePhi(llvm::Value *&V, const llvm::BasicBlock *From,
+                              const llvm::BasicBlock *To) {
+    llvm::PHINode *N = llvm::dyn_cast_or_null<llvm::PHINode>(V);
+    if (!N || N->getParent() != To) return;
+    V = N->getIncomingValueForBlock(From);
+  }
+
+  void collapseTautologies(PurityCondition &cond) {
+    if (cond.pred.is_true() || cond.pred.is_false()) return;
+    if (cond.pred.rhs == cond.pred.lhs) {
+      Tristate eq = predicateSatisfiedOnEquality(cond.pred.op);
+      if (eq != Tristate::MAYBE) {
+        cond.pred = (eq == Tristate::TRUE);
+      }
+    }
+
+    if (cond.pred.is_false()) cond.insertion_point = nullptr;
+  }
+
   PurityCondition getIn(const llvm::Loop *L, PurityConditions &conds,
                         const llvm::BasicBlock *From,
                         const llvm::BasicBlock *To) {
@@ -312,7 +413,11 @@ namespace {
       return true;
     }
     if (!L->contains(To)) return false;
-    return conds[To];
+    PurityCondition in = conds[To];
+    maybeResolvePhi(in.pred.rhs, From, To);
+    maybeResolvePhi(in.pred.lhs, From, To);
+    collapseTautologies(in);
+    return in;
   }
 
   PurityCondition computeOut(const llvm::Loop *L, PurityConditions &conds,
@@ -349,6 +454,7 @@ namespace {
   PurityCondition instructionPurity(llvm::Loop *L, llvm::Instruction &I) {
     if (!I.mayReadOrWriteMemory()
         && llvm::isSafeToSpeculativelyExecute(&I)) return true;
+    if (llvm::isa<llvm::PHINode>(I)) return true;
 
     if (const llvm::LoadInst *Ld = llvm::dyn_cast<llvm::LoadInst>(&I)) {
       /* No-segfaulting */
@@ -478,13 +584,15 @@ bool PartialLoopPurityPass::runOnLoop(llvm::Loop *L, llvm::LPPassManager &LPM){
   PurityConditions conditions = analyseLoop(L);
   PurityCondition headerCond = conditions[L->getHeader()];
   if (headerCond.is_false()) {
-    llvm::dbgs() << "Loop " << L->getHeader()->getParent()->getName() << ":"
-                 << *L << " isn't pure\n";
+    // llvm::dbgs() << "Loop " << L->getHeader()->getParent()->getName() << ":"
+    //              << *L << " isn't pure\n";
     DominatorTree = nullptr;
     return false;
   } else {
-    llvm::dbgs() << "Loop " << L->getHeader()->getParent()->getName() << ":"
-                 << *L << ": " << headerCond << "\n";
+    llvm::dbgs() << "Partially pure loop found in "
+                 << L->getHeader()->getParent()->getName() << "():\n";
+    L->print(llvm::dbgs(), 2);
+    llvm::dbgs() << " Purity condition: " << headerCond << "\n";
   }
 
   if (headerCond.pred.is_true()) {
@@ -493,9 +601,9 @@ bool PartialLoopPurityPass::runOnLoop(llvm::Loop *L, llvm::LPPassManager &LPM){
     return false;
   }
   llvm::Instruction *I = findInsertionPoint(L, DT, headerCond);
-  llvm::dbgs() << "Insertion point: " << *I << "\n";
+  llvm::dbgs() << " Insertion point: " << *I << "\n";
   llvm::CmpInst *CmpI = llvm::ICmpInst::Create
-    (llvm::Instruction::OtherOps::ICmp,
+    (getPredicateOpcode(headerCond.pred.op),
      llvm::CmpInst::getInversePredicate(headerCond.pred.op),
      headerCond.pred.lhs, headerCond.pred.rhs, "negated.pp.cond", I);
   llvm::Value *Cond = CmpI;
