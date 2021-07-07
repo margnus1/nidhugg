@@ -1,4 +1,4 @@
-// nidhuggc: -sc -rf -no-assume-await -unroll=4
+// nidhuggc: -sc -rf -no-assume-await
 /* Test based on the SafeStack benchmark from SCTBench. */
 
 #include <stdio.h>

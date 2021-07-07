@@ -115,12 +115,13 @@ safestack_c21_21_opt_rmwcomm Forbid : 21
 # Tests for the partial-loop-purity transformation pass. These should pass (1
 # trace)
 plptest_fully_pure Forbid : 1
-plptest_risk_of_segfault Forbid : 4
+plptest_risk_of_segfault Forbid : 1
 plptest_spinloop Forbid : 4
+# Pasing tests with >1 trace
+plptest_safestack_21_easy Forbid : 13
 # These should fail (>1 trace)
 plptest_leaky_counter Forbid : 4
 # Currently failing, pass is >1 trace
-plptest_safestack_21_easy Forbid : 19
 plptest_safestack_21_inlined Forbid : 19
 plptest_safestack_21_inlined_xchg Forbid : 54
 plptest_safestack_21 Forbid : 54
