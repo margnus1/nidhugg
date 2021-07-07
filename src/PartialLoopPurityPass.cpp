@@ -17,15 +17,14 @@
  * <http://www.gnu.org/licenses/>.
  */
 
-#include "llvm/IR/Verifier.h"
-#include "llvm/Support/Debug.h"
 #include <config.h>
 
-#include <unordered_map>
+#include "CheckModule.h"
+#include "PartialLoopPurityPass.h"
+#include "SpinAssumePass.h"
 
 #include <llvm/Pass.h>
 #include <llvm/Analysis/LoopPass.h>
-#include <unordered_map>
 #if defined(HAVE_LLVM_IR_DOMINATORS_H)
 #include <llvm/IR/Dominators.h>
 #elif defined(HAVE_LLVM_ANALYSIS_DOMINATORS_H)
@@ -58,10 +57,11 @@
 #endif
 #include <llvm/Transforms/Utils/BasicBlockUtils.h>
 #include <llvm/Analysis/ValueTracking.h>
+#include <llvm/IR/Verifier.h>
+#include <llvm/Support/Debug.h>
 
-#include "CheckModule.h"
-#include "PartialLoopPurityPass.h"
-#include "SpinAssumePass.h"
+#include <unordered_map>
+#include <sstream>
 
 #ifdef LLVM_HAS_TERMINATORINST
 typedef llvm::TerminatorInst TerminatorInst;
@@ -70,173 +70,183 @@ typedef llvm::Instruction TerminatorInst;
 #endif
 
 namespace {
+  /* Not reentrant */
   static const llvm::DominatorTree *DominatorTree;
 
   struct PurityCondition {
-    llvm::Value *lhs = nullptr, *rhs = nullptr;
-    /* FCMP_TRUE and FCMP_FALSE are used as special values indicating
-     * unconditional purity
-     */
-    llvm::CmpInst::Predicate op = llvm::CmpInst::FCMP_TRUE;
+    struct BinaryPredicate {
+      llvm::Value *lhs = nullptr, *rhs = nullptr;
+      /* FCMP_TRUE and FCMP_FALSE are used as special values indicating
+       * unconditional purity
+       */
+      llvm::CmpInst::Predicate op = llvm::CmpInst::FCMP_TRUE;
+
+      BinaryPredicate() {}
+      BinaryPredicate(bool static_value) {
+        op = static_value ? llvm::CmpInst::FCMP_TRUE : llvm::CmpInst::FCMP_FALSE;
+      }
+      BinaryPredicate(llvm::CmpInst::Predicate op, llvm::Value *lhs,
+                      llvm::Value *rhs)
+        : lhs(lhs), rhs(rhs), op(op) {
+        assert(!(is_true() || is_false()) || (lhs == nullptr && rhs == nullptr));
+      }
+
+      bool is_true() const {
+        assert(!(op == llvm::CmpInst::FCMP_TRUE && (lhs || rhs)));
+        return op == llvm::CmpInst::FCMP_TRUE;
+      }
+      bool is_false() const {
+        assert(!(op == llvm::CmpInst::FCMP_FALSE && (lhs || rhs)));
+        return op == llvm::CmpInst::FCMP_FALSE;
+      }
+
+      BinaryPredicate negate() const {
+        return {llvm::CmpInst::getInversePredicate(op), lhs, rhs};
+      }
+
+      // IDEA: Use operator| for join (and operator& for meet, if needed),
+      // unless it's confusing
+      BinaryPredicate operator&(const BinaryPredicate &other) const {
+        if (other.is_true() || *this == other) return *this;
+        if (is_true()) return other;
+        return false;
+      }
+      BinaryPredicate &operator&=(const BinaryPredicate &other) {
+        // if (other.is_true() || *this == other) return *this;
+        // if (is_true()) return *this = other;
+        // op = llvm::CmpInst::FCMP_FALSE;
+        // lhs = rhs = nullptr;
+        // return *this;
+        return *this = (*this & other);
+      }
+
+      bool operator!=(const BinaryPredicate &other) const { return !(*this == other); }
+      bool operator==(const BinaryPredicate &other) const {
+        assert(!(is_true() || is_false()) || (lhs == nullptr && rhs == nullptr));
+        return lhs == other.lhs && rhs == other.rhs && op == other.op;
+      }
+      bool operator<(const BinaryPredicate &other) const {
+        if (other.is_true() && !is_true()) return true;
+        if (is_false() && !other.is_false()) return true;
+        return false;
+      }
+      bool operator<=(const BinaryPredicate &other) const {
+        return *this == other || *this < other;
+      }
+    } pred;
+
+    /* Earliest location that can support an insertion. nullptr means
+     * that any location is fine. */
+    llvm::Instruction *insertion_point = nullptr;
+
     PurityCondition() {}
-    PurityCondition(bool static_value) {
-      op = static_value ? llvm::CmpInst::FCMP_TRUE : llvm::CmpInst::FCMP_FALSE;
-    }
+    PurityCondition(bool static_pred, llvm::Instruction *insertion_point = nullptr)
+      : pred(static_pred), insertion_point(static_pred ? insertion_point : nullptr) {}
     PurityCondition(llvm::CmpInst::Predicate op, llvm::Value *lhs,
-                    llvm::Value *rhs)
-      : lhs(lhs), rhs(rhs), op(op) {
-      assert(!(is_true() || is_false()) || (lhs == nullptr && rhs == nullptr));
+                    llvm::Value *rhs) : pred(op, lhs, rhs) {}
+    // PurityCondition(BinaryPredicate pred, llvm::Instruction *insertion_point)
+    //   : pred(std::move(pred)), insertion_point(insertion_point) {}
+
+    bool is_true() const { return pred.is_true() && !insertion_point; }
+    bool is_false() const {
+      assert(!(pred.is_false() && insertion_point));
+      return pred.is_false();
     }
-
-    bool is_true() const { return op == llvm::CmpInst::FCMP_TRUE; }
-    bool is_false() const { return op == llvm::CmpInst::FCMP_FALSE; }
-
     PurityCondition negate() const {
-      return {llvm::CmpInst::getInversePredicate(op), lhs, rhs};
+      PurityCondition res = *this;
+      res.pred = pred.negate();
+      return res;
     }
 
     // IDEA: Use operator| for join (and operator& for meet, if needed),
     // unless it's confusing
     PurityCondition operator&(const PurityCondition &other) const {
-      if (other.is_true() || *this == other) return *this;
-      if (is_true()) return other;
-      return false;
+      PurityCondition res;
+      if (!insertion_point) res.insertion_point = other.insertion_point;
+      else if (!other.insertion_point) res.insertion_point = insertion_point;
+      else if (insertion_point == other.insertion_point) res.insertion_point = insertion_point;
+      else if (DominatorTree->dominates(insertion_point, other.insertion_point)) {
+        res.insertion_point = other.insertion_point;
+      } else if (DominatorTree->dominates(other.insertion_point, insertion_point)) {
+        res.insertion_point = insertion_point;
+      } else {
+        /* TODO: We have to find the least common denominator */
+        llvm::dbgs() << "Meeting insertion points general case not implemented\n";
+        return false; // Underapproximating for now
+      }
+
+      res.pred = pred & other.pred;
+      if (res.pred.is_false()) res.insertion_point = nullptr; // consistency
+      return res;
     }
     PurityCondition &operator&=(const PurityCondition &other) {
-      // if (other.is_true() || *this == other) return *this;
-      // if (is_true()) return *this = other;
-      // op = llvm::CmpInst::FCMP_FALSE;
-      // lhs = rhs = nullptr;
-      // return *this;
       return *this = (*this & other);
     }
 
+  private:
+    llvm::Instruction *join_insertion_points(llvm::Instruction *other) const {
+      llvm::Instruction *me = this->insertion_point;
+      if (!me || !other) return nullptr;
+      if (DominatorTree->dominates(other, me)) {
+        assert(other != me);
+        return other;
+      }
+      return me;
+    }
+  public:
     PurityCondition operator|(const PurityCondition &other) const {
       if (other.is_false()) return *this;
       if (is_false()) return other;
-      if (lhs == other.lhs && rhs == other.rhs &&
-          /* Maybe this can be made more precise. F.ex. <= | >= is also
-           * true. There might be such a check in LLVM already. */
-          llvm::CmpInst::getInversePredicate(op) == other.op) {
-        return true;
+      if (pred.lhs == other.pred.lhs && pred.rhs == other.pred.rhs) {
+        /* Maybe this can be made more precise. F.ex. <= | >= is also
+         * true. There might be such a check in LLVM already. */
+        if (llvm::CmpInst::getInversePredicate(pred.op) == other.pred.op) {
+          return PurityCondition(true, join_insertion_points(other.insertion_point));
+        } else if (pred == other.pred) {
+          PurityCondition res = *this;
+          res.insertion_point = join_insertion_points(other.insertion_point);
+          return res;
+        }
       }
       /* XXX: We have to underapproximate :( */
-      if (other.is_true()) return other;
+      if (*this < other) return other;
       else return *this;
     }
 
-    bool operator!=(const PurityCondition &other) const { return !(*this == other); }
-    bool operator==(const PurityCondition &other) const {
-      assert(!(is_true() || is_false()) || (lhs == nullptr && rhs == nullptr));
-      return lhs == other.lhs && rhs == other.rhs && op == other.op;
+    bool operator!=(const PurityCondition &other) { return !(*this == other); }
+    bool operator==(const PurityCondition &other) {
+      return pred == other.pred && insertion_point == other.insertion_point;
     }
-    bool operator <(const PurityCondition &other) const {
-      if (other.is_true() && !is_true()) return true;
-      if (is_false() && !other.is_false()) return true;
-      return false;
+    bool operator<(const PurityCondition &other) const {
+      if (is_false()) return !other.is_false();
+      else if (!other.insertion_point && insertion_point /* < */) return pred <= other.pred;
+      else if (!insertion_point && other.insertion_point /* > */) return false;
+      else if (insertion_point == other.insertion_point /* == */) return pred < other.pred;
+      else if (insertion_point && other.insertion_point) {
+        if (DominatorTree->dominates(other.insertion_point, insertion_point) /* < */) {
+          return pred <= other.pred;
+        }
+        return false; /* Incomparable */
+      }
+
+      llvm_unreachable("All cases of insertion_point comparision covered above");
     }
+
   };
   typedef std::unordered_map<const llvm::BasicBlock*,PurityCondition> PurityConditions;
 
-  PurityCondition getIn(const llvm::Loop *L, PurityConditions &conds,
-                        const llvm::BasicBlock *BB) {
-    if (BB == L->getHeader()) return true;
-    return conds[BB];
-  }
-
-  PurityCondition computeOut(const llvm::Loop *L, PurityConditions &conds,
-                             const llvm::BasicBlock *BB) {
-    if (auto *branch = llvm::dyn_cast<llvm::BranchInst>(BB->getTerminator())) {
-      if (auto *cmp = llvm::dyn_cast_or_null<llvm::CmpInst>
-          (branch->isConditional() ? branch->getCondition() : nullptr)) {
-        PurityCondition trueIn = getIn(L, conds, branch->getSuccessor(0));
-        PurityCondition falseIn = getIn(L, conds, branch->getSuccessor(1));
-        if (trueIn == falseIn) return trueIn;
-        // If the operands are in the loop, we can check them for
-        // purity; if not, the condition should just be false. That way,
-        // we won't waste good conditions in the overapproximations
-        PurityCondition cmpCond(cmp->getPredicate(), cmp->getOperand(0), cmp->getOperand(1));
-        // if (trueIn.is_true()) return falseIn | cmpCond;
-        // if (falseIn.is_true()) return trueIn | cmpCond.negate();
-        return (falseIn | cmpCond) & (trueIn | cmpCond.negate());
-      }
+  llvm::raw_ostream &operator<<(llvm::raw_ostream &os, const PurityCondition &cond) {
+    if (cond.pred.is_true()) os << "true";
+    else if (cond.pred.is_false()) os << "false";
+    else {
+      cond.pred.lhs->printAsOperand(os);
+      os << " " << cond.pred.op << " ";
+      cond.pred.rhs->printAsOperand(os);
     }
-
-    /* Generic implementation; no concern for branch conditions */
-    PurityCondition cond;
-    for (const llvm::BasicBlock *s : llvm::successors(BB)) {
-      cond &= conds[s];
+    if (cond.insertion_point) {
+      os << " after " << *cond.insertion_point;
     }
-    return cond;
-  }
-
-  /* We should probably calculate this once and cache it */
-  /* It also needs to be path-sensitive; a value might escape only on
-   * the non-pure path.
-   */
-  bool escapesLoop(const llvm::Loop *L, const llvm::Value *Value) {
-    llvm::SmallPtrSet<const llvm::Value*, 10> tried;
-    llvm::SmallVector<const llvm::Value*, 4> stack{Value};
-    while(stack.size()) {
-      const llvm::Value *V = stack.back(); stack.pop_back();
-      if (const llvm::Instruction *I = llvm::dyn_cast<llvm::Instruction>(V)) {
-        if (!L->contains(I->getParent())) return true;
-      }
-      if (llvm::isa<llvm::ReturnInst>(V)) return true; // XXX: more cases?
-      tried.insert(V);
-      for (const llvm::Value *U : V->users()) {
-        if (tried.count(U)) continue;
-        stack.push_back(U);
-      }
-    }
-    return false;
-  }
-
-  PurityCondition instructionPurity(llvm::Loop *L, const llvm::Instruction &I) {
-    if (!I.mayReadOrWriteMemory()
-        && llvm::isSafeToSpeculativelyExecute(&I)) return true;
-
-    if (const llvm::LoadInst *Ld = llvm::dyn_cast<llvm::LoadInst>(&I)) {
-      /* No-segfaulting */
-      if ((llvm::isa<llvm::GlobalValue>(Ld->getPointerOperand())
-           || llvm::isa<llvm::AllocaInst>(Ld->getPointerOperand()))
-          && !escapesLoop(L, Ld)) {
-        return true;
-      }
-    }
-    if (!I.mayWriteToMemory() && llvm::isSafeToSpeculativelyExecute(&I)) {
-      llvm::dbgs() << "Wow, a safe-to-speculate loading inst: " << I << "\n";
-      /* Check if we leak the value */
-      if (escapesLoop(L, &I))
-        return true;
-    }
-    /* XXX: Do me */
-
-    return false;
-  }
-
-  PurityConditions analyseLoop(llvm::Loop *L) {
-    PurityConditions conds;
-    const auto &blocks = L->getBlocks();
-    bool changed;
-    do {
-      changed = false;
-      // Assume it's in reverse postorder, or some suitable order
-      for (auto it = blocks.rbegin(); it != blocks.rend(); ++it) {
-        const llvm::BasicBlock *BB = *it;
-        PurityCondition cond = computeOut(L, conds, BB);
-        /* Skip the terminator */
-        for (auto it = BB->rbegin(); ++it != BB->rend();) {
-          cond &= instructionPurity(L, *it);
-        }
-        if (conds[BB] != cond) {
-          assert(cond < conds[BB]);
-          changed = true;
-          conds[BB] = cond;
-        }
-      }
-    } while(changed);
-    return conds;
+    return os;
   }
 
   llvm::Instruction *maybeFindUserLocation
@@ -268,36 +278,187 @@ namespace {
     return maybeFindUserLocation(U, Set);
   }
 
-  llvm::Instruction *findUserLocation(llvm::User *U) {
-    llvm::SmallPtrSet<llvm::User*, 16> Set;
-    llvm::Instruction *I = maybeFindUserLocation(U, Set);
-    if (!I) {
-      llvm::dbgs() << "User " << *U << " has no location!\n";
+  llvm::Instruction *maybeFindValueLocation(llvm::Value *V) {
+    if (llvm::User *U = llvm::dyn_cast<llvm::User>(V)) {
+      llvm::SmallPtrSet<llvm::User*, 16> Set;
+      return maybeFindUserLocation(U, Set);
+    } else {
+      return nullptr;
     }
-    assert(I);
-    return I;
+  }
+
+  PurityCondition getIn(const llvm::Loop *L, PurityConditions &conds,
+                        const llvm::BasicBlock *From,
+                        const llvm::BasicBlock *To) {
+    if (To == L->getHeader()) {
+      /* Check for data leaks along the back edge */
+      // llvm::dbgs() << "Checking " << From->getName() << "->" << To->getName()
+      //              << " for escaping phis: \n";
+      for (const llvm::Instruction *I = &*To->begin();
+           I != To->getFirstNonPHI(); I = I->getNextNode()) {
+        const llvm::PHINode *Phi = llvm::cast<llvm::PHINode>(I);
+        llvm::Value *V = Phi->getIncomingValueForBlock(From);
+        // llvm::dbgs() << "  "; Phi->printAsOperand(llvm::dbgs());
+        // llvm::dbgs() << ": "; V->printAsOperand(llvm::dbgs()); llvm::dbgs() << "\n";
+        if (llvm::Instruction *VI = maybeFindValueLocation(V)) {
+          if (L->contains(VI)) {
+            // llvm::dbgs() << "  leak: "; V->printAsOperand(llvm::dbgs());
+            // llvm::dbgs() << " through "; Phi->printAsOperand(llvm::dbgs());
+            // llvm::dbgs() << "\n";
+            return false; /* Leak */
+          }
+        }
+      }
+      return true;
+    }
+    if (!L->contains(To)) return false;
+    return conds[To];
+  }
+
+  PurityCondition computeOut(const llvm::Loop *L, PurityConditions &conds,
+                             const llvm::BasicBlock *BB) {
+    if (auto *branch = llvm::dyn_cast<llvm::BranchInst>(BB->getTerminator())) {
+      if (auto *cmp = llvm::dyn_cast_or_null<llvm::CmpInst>
+          (branch->isConditional() ? branch->getCondition() : nullptr)) {
+        PurityCondition trueIn = getIn(L, conds, BB, branch->getSuccessor(0));
+        PurityCondition falseIn = getIn(L, conds, BB, branch->getSuccessor(1));
+        if (trueIn == falseIn) return trueIn;
+        // If the operands are in the loop, we can check them for
+        // purity; if not, the condition should just be false. That way,
+        // we won't waste good conditions in the overapproximations
+        PurityCondition cmpCond(cmp->getPredicate(), cmp->getOperand(0), cmp->getOperand(1));
+        // if (trueIn.is_true()) return falseIn | cmpCond;
+        // if (falseIn.is_true()) return trueIn | cmpCond.negate();
+        // llvm::dbgs() << "   lhs: " << (falseIn | cmpCond) << "\n";
+        // llvm::dbgs() << "    trueIn: " << trueIn << "\n";
+        // llvm::dbgs() << "    cmpCond.negate(): " << cmpCond.negate() << "\n";
+        // llvm::dbgs() << "   rhs: " << (trueIn | cmpCond.negate()) << "\n";
+        // assert(!(trueIn | cmpCond.negate()).is_false() || (trueIn.is_false() && cmpCond.is_false()));
+        return (falseIn | cmpCond) & (trueIn | cmpCond.negate());
+      }
+    }
+
+    /* Generic implementation; no concern for branch conditions */
+    PurityCondition cond;
+    for (const llvm::BasicBlock *s : llvm::successors(BB)) {
+      cond &= getIn(L, conds, BB, s);
+    }
+    return cond;
+  }
+
+  PurityCondition instructionPurity(llvm::Loop *L, llvm::Instruction &I) {
+    if (!I.mayReadOrWriteMemory()
+        && llvm::isSafeToSpeculativelyExecute(&I)) return true;
+
+    if (const llvm::LoadInst *Ld = llvm::dyn_cast<llvm::LoadInst>(&I)) {
+      /* No-segfaulting */
+      if ((llvm::isa<llvm::GlobalValue>(Ld->getPointerOperand())
+           || llvm::isa<llvm::AllocaInst>(Ld->getPointerOperand()))) {
+        return true;
+      } else {
+        return PurityCondition(true, &I);
+      }
+    }
+    if (!I.mayWriteToMemory()) {
+      if (llvm::isSafeToSpeculativelyExecute(&I)) {
+        llvm::dbgs() << "Wow, a safe-to-speculate loading inst: " << I << "\n";
+        return true;
+      } else {
+        return PurityCondition(true, &I);
+      }
+    }
+    /* XXX: Do me */
+
+    return false;
+  }
+
+  PurityConditions analyseLoop(llvm::Loop *L) {
+    PurityConditions conds;
+    const auto &blocks = L->getBlocks();
+    bool changed;
+    // llvm::dbgs() << "Analysing " << *L;
+    do {
+      changed = false;
+      // Assume it's in reverse postorder, or some suitable order
+      for (auto it = blocks.rbegin(); it != blocks.rend(); ++it) {
+        llvm::BasicBlock *BB = *it;
+        PurityCondition cond = computeOut(L, conds, BB);
+        // llvm::dbgs() << "  out of " << BB->getName() << ": " << cond << "\n";
+        /* Skip the terminator */
+        for (auto it = BB->rbegin(); ++it != BB->rend();) {
+          cond &= instructionPurity(L, *it);
+        }
+        if (conds[BB] != cond) {
+          // llvm::dbgs() << " " << BB->getName() << ": " << cond << "\n";
+          if (!(cond < conds[BB])) {
+            llvm::dbgs() << cond << "\n" << conds[BB] << "\n";
+            assert(cond < conds[BB]);
+            abort();
+          }
+          changed = true;
+          conds[BB] = cond;
+        }
+      }
+    } while(changed);
+    return conds;
+  }
+
+  bool dominates_or_equals(const llvm::DominatorTree &DT,
+                           llvm::Instruction *Def, llvm::Instruction *User) {
+    return Def == User || DT.dominates(Def, User);
   }
 
   llvm::Instruction *findInsertionPoint(llvm::Loop *L,
                                         const llvm::DominatorTree &DT,
                                         const PurityCondition &cond) {
-    if (llvm::Instruction *LHS = maybeFindUserLocationOrNull
-        (llvm::dyn_cast<llvm::User>(cond.lhs))) {
-      if (llvm::Instruction *RHS = maybeFindUserLocationOrNull
-          (llvm::dyn_cast<llvm::User>(cond.rhs))) {
-        if (DT.dominates(LHS, RHS)) return RHS->getNextNode();
-        if (DT.dominates(RHS, LHS)) return LHS->getNextNode();
-        /* uh oh, hard case */
-        assert(false && "Implement me");
+    if (llvm::Instruction *IPT = cond.insertion_point) {
+      if (llvm::Instruction *LHS = maybeFindUserLocationOrNull
+          (llvm::dyn_cast<llvm::User>(cond.pred.lhs))) {
+        if (llvm::Instruction *RHS = maybeFindUserLocationOrNull
+            (llvm::dyn_cast<llvm::User>(cond.pred.rhs))) {
+          if (dominates_or_equals(DT, LHS, IPT) &&
+              dominates_or_equals(DT, RHS, IPT)) return IPT->getNextNode();
+          if (dominates_or_equals(DT, IPT, RHS) &&
+              dominates_or_equals(DT, LHS, RHS)) return RHS->getNextNode();
+          if (dominates_or_equals(DT, IPT, LHS) &&
+              dominates_or_equals(DT, RHS, LHS)) return LHS->getNextNode();
+          /* uh oh, hard case */
+          assert(false && "Implement me"); abort();
+        } else {
+          if (dominates_or_equals(DT, LHS, IPT)) return IPT->getNextNode();
+          if (dominates_or_equals(DT, IPT, LHS)) return LHS->getNextNode();
+          /* uh oh, hard case */
+          assert(false && "Implement me"); abort();
+        }
+      } else if (llvm::Instruction *RHS = maybeFindUserLocationOrNull
+            (llvm::dyn_cast<llvm::User>(cond.pred.rhs))) {
+          if (dominates_or_equals(DT, LHS, IPT)) return IPT->getNextNode();
+          if (dominates_or_equals(DT, IPT, LHS)) return LHS->getNextNode();
+          /* uh oh, hard case */
+          assert(false && "Implement me"); abort();
       } else {
-        return LHS->getNextNode();
+        return IPT->getNextNode();
       }
-    } else if (llvm::Instruction *RHS = maybeFindUserLocationOrNull
-               (llvm::dyn_cast<llvm::User>(cond.rhs))) {
-      return findUserLocation(RHS);
+    } else {
+      if (llvm::Instruction *LHS = maybeFindUserLocationOrNull
+          (llvm::dyn_cast<llvm::User>(cond.pred.lhs))) {
+        if (llvm::Instruction *RHS = maybeFindUserLocationOrNull
+            (llvm::dyn_cast<llvm::User>(cond.pred.rhs))) {
+          if (dominates_or_equals(DT, LHS, RHS)) return RHS->getNextNode();
+          if (dominates_or_equals(DT, RHS, LHS)) return LHS->getNextNode();
+          /* uh oh, hard case */
+          assert(false && "Implement me"); abort();
+        } else {
+          return LHS->getNextNode();
+        }
+      } else if (llvm::Instruction *RHS = maybeFindUserLocationOrNull
+                 (llvm::dyn_cast<llvm::User>(cond.pred.rhs))) {
+        return RHS->getNextNode();
+      } else {
+        return &*L->getHeader()->getFirstInsertionPt();
+      }
     }
-
-    return &*L->getHeader()->getFirstInsertionPt();
+    llvm_unreachable("All cases covered in findInsertionPoint");
   }
 }
 
@@ -308,8 +469,8 @@ void PartialLoopPurityPass::getAnalysisUsage(llvm::AnalysisUsage &AU) const{
 }
 
 bool PartialLoopPurityPass::runOnLoop(llvm::Loop *L, llvm::LPPassManager &LPM){
-  llvm::dbgs() << "Analysing " << L->getHeader()->getParent()->getName() << ":\n";
-  llvm::dbgs() << *L->getHeader()->getParent();
+  // llvm::dbgs() << "Analysing " << L->getHeader()->getParent()->getName() << ":\n";
+  // llvm::dbgs() << *L->getHeader()->getParent();
   const llvm::DominatorTree &DT
     = getAnalysis<llvm::LLVM_DOMINATOR_TREE_PASS>().getDomTree();
   assert(!DominatorTree);
@@ -323,23 +484,20 @@ bool PartialLoopPurityPass::runOnLoop(llvm::Loop *L, llvm::LPPassManager &LPM){
     return false;
   } else {
     llvm::dbgs() << "Loop " << L->getHeader()->getParent()->getName() << ":"
-                 << *L << ": ";
-    if (headerCond.is_true()) llvm::dbgs() << "true\n";
-    else {
-      llvm::dbgs() << *headerCond.lhs << " " << headerCond.op << " "
-                   << *headerCond.rhs << "\n";
-    }
+                 << *L << ": " << headerCond << "\n";
   }
 
-  if (headerCond.is_true()) {
+  if (headerCond.pred.is_true()) {
     /* Insert assume(false); at the beginning of the header */
+    llvm::dbgs() << "Full purity not implemented\n";
+    return false;
   }
   llvm::Instruction *I = findInsertionPoint(L, DT, headerCond);
   llvm::dbgs() << "Insertion point: " << *I << "\n";
   llvm::CmpInst *CmpI = llvm::ICmpInst::Create
     (llvm::Instruction::OtherOps::ICmp,
-     llvm::CmpInst::getInversePredicate(headerCond.op),
-     headerCond.lhs, headerCond.rhs, "negated.pp.cond", I);
+     llvm::CmpInst::getInversePredicate(headerCond.pred.op),
+     headerCond.pred.lhs, headerCond.pred.rhs, "negated.pp.cond", I);
   llvm::Value *Cond = CmpI;
   llvm::Function *F_assume = L->getHeader()->getParent()->getParent()
     ->getFunction("__VERIFIER_assume");
@@ -352,8 +510,8 @@ bool PartialLoopPurityPass::runOnLoop(llvm::Loop *L, llvm::LPPassManager &LPM){
   }
   llvm::CallInst::Create(F_assume,{Cond},"",I);
 
-  llvm::dbgs() << "Rewritten:\n";
-  llvm::dbgs() << *L->getHeader()->getParent();
+  // llvm::dbgs() << "Rewritten:\n";
+  // llvm::dbgs() << *L->getHeader()->getParent();
   assert(!llvm::verifyFunction(*L->getHeader()->getParent(), &llvm::dbgs()));
 
   DominatorTree = nullptr;
