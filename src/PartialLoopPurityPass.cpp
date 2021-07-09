@@ -156,10 +156,6 @@ namespace {
           lhs = rhs = nullptr;
         } else {
           assert(lhs && rhs);
-          // if (lhs < rhs) {
-          //   std::swap(lhs, rhs);
-          //   op = llvm::CmpInst::getSwappedPredicate(op);
-          // }
         }
       }
 
@@ -282,11 +278,6 @@ namespace {
         return false;
       }
       BinaryPredicate &operator&=(const BinaryPredicate &other) {
-        // if (other.is_true() || *this == other) return *this;
-        // if (is_true()) return *this = other;
-        // op = llvm::CmpInst::FCMP_FALSE;
-        // lhs = rhs = nullptr;
-        // return *this;
         return *this = (*this & other);
       }
 
@@ -541,8 +532,17 @@ namespace {
       if (llvm::CmpInst::isFalseWhenEqual(cond.pred.op)) cond.pred = false;
       if (llvm::CmpInst::isTrueWhenEqual(cond.pred.op))  cond.pred = true;
     }
+    if (llvm::ConstantInt *LHS = llvm::dyn_cast_or_null<llvm::ConstantInt>(cond.pred.lhs)) {
+      if (llvm::ConstantInt *RHS = llvm::dyn_cast_or_null<llvm::ConstantInt>(cond.pred.rhs)) {
+        if (check_predicate_satisfaction(LHS->getValue(), cond.pred.op, RHS->getValue())) {
+          cond.pred = true;
+        } else  {
+          cond = false;
+        }
+      }
+    }
 
-    if (cond.pred.is_false()) cond.insertion_point = nullptr;
+    cond.normalise();
   }
 
   PurityCondition getIn(const llvm::Loop *L, PurityConditions &conds,
@@ -657,25 +657,55 @@ namespace {
       case llvm::AtomicRMWInst::BinOp::UMax:
       case llvm::AtomicRMWInst::BinOp::Xor:
         /* arg == 0 */
-        // TODO
+        pred = {llvm::CmpInst::ICMP_EQ, arg,
+          llvm::ConstantInt::get(RMW->getType(), 0)};
         break;
       case llvm::AtomicRMWInst::BinOp::And:
       case llvm::AtomicRMWInst::BinOp::UMin:
         /* arg == 0b111...1 */
-        // TODO
+        pred = {llvm::CmpInst::ICMP_EQ, arg,
+          llvm::ConstantInt::getAllOnesValue(RMW->getType())};
         break;
       case llvm::AtomicRMWInst::BinOp::Xchg:
         /* ret == arg */
         pred = {llvm::CmpInst::ICMP_EQ, &I, arg};
         break;
       }
+      PurityCondition ret;
       if (isSafeToLoadFromPointer(RMW->getPointerOperand())) {
-        return PurityCondition(pred);
+        ret = PurityCondition(pred);
       } else {
-        return PurityCondition(pred, I.getNextNode());
+        ret = PurityCondition(pred, I.getNextNode());
+      }
+      collapseTautologies(ret);
+      return ret;
+    }
+
+    /* Extension: We do not yet handle when the return value of the cmpxchg is used for  */
+    if (llvm::AtomicCmpXchgInst *CX = llvm::dyn_cast<llvm::AtomicCmpXchgInst>(&I)) {
+      /* Try to find a ExtractValue instruction that extracts the
+       * success bit */
+      llvm::ExtractValueInst *success = nullptr;
+      for (llvm::User *U : CX->users()) {
+        if (llvm::ExtractValueInst *EV = llvm::dyn_cast<llvm::ExtractValueInst>(U)) {
+          if (EV->getNumIndices() == 1 && EV->idx_begin()[0] == 1) {
+            success = EV;
+            break;
+          }
+        }
+      }
+      if (success) {
+        PurityCondition::BinaryPredicate pred
+          (llvm::CmpInst::ICMP_EQ, success,
+           llvm::ConstantInt::getFalse(CX->getContext()));
+        if (isSafeToLoadFromPointer(CX->getPointerOperand())) {
+          return PurityCondition(pred);
+        } else {
+          return PurityCondition(pred, I.getNextNode());
+        }
       }
     }
-    /* XXX: Do me */
+    /* Extension point: We could add more instructions here */
 
     return false;
   }
