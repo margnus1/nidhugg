@@ -21,6 +21,7 @@ libnidhugg_a_SOURCES = \
   GlobalContext.cpp GlobalContext.h \
   IID.h IID.tcc \
   Interpreter.cpp Interpreter.h \
+  LoopBoundPass.cpp LoopBoundPass.h \
   LoopUnrollPass.cpp LoopUnrollPass.h \
   MRef.cpp MRef.h \
   nregex.cpp nregex.h \
