@@ -117,6 +117,7 @@ safestack_c21_21_opt_rmwcomm Forbid : 21
 plptest_fully_pure Forbid : 1
 plptest_risk_of_segfault Forbid : 1
 plptest_spinloop Forbid : 1
+plptest_br_cond_not Forbid : 1
 # Pasing tests with >1 trace
 plptest_safestack_21_easy Forbid : 13
 plptest_safestack_21_inlined Forbid : 13

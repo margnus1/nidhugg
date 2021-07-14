@@ -610,11 +610,35 @@ namespace {
     return in;
   }
 
+  PurityCondition getBranchCondition(llvm::Value *cond) {
+    assert(cond && llvm::isa<llvm::IntegerType>(cond->getType())
+           && llvm::cast<llvm::IntegerType>(cond->getType())->getBitWidth() == 1);
+    if (auto *cmp = llvm::dyn_cast<llvm::CmpInst>(cond)) {
+        return PurityCondition(cmp->getPredicate(), cmp->getOperand(0),
+                               cmp->getOperand(1));
+    } else if (auto *bop = llvm::dyn_cast<llvm::BinaryOperator>(cond)) {
+      if (bop->getOpcode() == llvm::Instruction::Xor) {
+        llvm::Value *lhs = bop->getOperand(0), *rhs = bop->getOperand(1);
+        if (llvm::isa<llvm::ConstantInt>(lhs) || llvm::isa<llvm::ConstantInt>(rhs)) {
+          if (!llvm::isa<llvm::ConstantInt>(rhs)) std::swap(lhs, rhs);
+          llvm::ConstantInt *rhsi = llvm::cast<llvm::ConstantInt>(rhs);
+          if (rhsi->getValue() == 0) {
+            return getBranchCondition(lhs);
+          } else {
+            assert(rhsi->getValue() == 1);
+            return getBranchCondition(lhs).negate();
+          }
+        }
+      }
+    }
+    return PurityCondition(llvm::CmpInst::ICMP_EQ, cond,
+                           llvm::ConstantInt::getTrue(cond->getContext()));
+  }
+
   PurityCondition computeOut(const llvm::Loop *L, PurityConditions &conds,
                              const llvm::BasicBlock *BB) {
     if (auto *branch = llvm::dyn_cast<llvm::BranchInst>(BB->getTerminator())) {
-      if (auto *cmp = llvm::dyn_cast_or_null<llvm::CmpInst>
-          (branch->isConditional() ? branch->getCondition() : nullptr)) {
+      if (branch->isConditional()) {
         llvm::BasicBlock *trueSucc = branch->getSuccessor(0);
         llvm::BasicBlock *falseSucc = branch->getSuccessor(1);
         PurityCondition trueIn = getIn(L, conds, BB, trueSucc);
@@ -623,25 +647,25 @@ namespace {
         // If the operands are in the loop, we can check them for
         // purity; if not, the condition should just be false. That way,
         // we won't waste good conditions in the overapproximations
-        PurityCondition cmpCond(cmp->getPredicate(), cmp->getOperand(0), cmp->getOperand(1));
+        PurityCondition brCond = getBranchCondition(branch->getCondition());
         if (!L->contains(trueSucc)) {
           assert(trueIn.is_false());
-          if (falseIn.is_true()) return cmpCond.negate();
+          if (falseIn.is_true()) return brCond.negate();
           return falseIn & PurityCondition(true, &*falseSucc->getFirstInsertionPt());
         }
         if (!L->contains(falseSucc)) {
           assert(falseIn.is_false());
-          if (trueIn.is_true()) return cmpCond;
+          if (trueIn.is_true()) return brCond;
           return trueIn & PurityCondition(true, &*trueSucc->getFirstInsertionPt());
         }
-        // if (trueIn.is_true()) return falseIn | cmpCond;
-        // if (falseIn.is_true()) return trueIn | cmpCond.negate();
-        // llvm::dbgs() << "   lhs: " << (falseIn | cmpCond) << "\n";
+        // if (trueIn.is_true()) return falseIn | brCond;
+        // if (falseIn.is_true()) return trueIn | brCond.negate();
+        // llvm::dbgs() << "   lhs: " << (falseIn | brCond) << "\n";
         // llvm::dbgs() << "    trueIn: " << trueIn << "\n";
-        // llvm::dbgs() << "    cmpCond.negate(): " << cmpCond.negate() << "\n";
-        // llvm::dbgs() << "   rhs: " << (trueIn | cmpCond.negate()) << "\n";
-        // assert(!(trueIn | cmpCond.negate()).is_false() || (trueIn.is_false() && cmpCond.is_false()));
-        return (falseIn | cmpCond) & (trueIn | cmpCond.negate());
+        // llvm::dbgs() << "    brCond.negate(): " << brCond.negate() << "\n";
+        // llvm::dbgs() << "   rhs: " << (trueIn | brCond.negate()) << "\n";
+        // assert(!(trueIn | brCond.negate()).is_false() || (trueIn.is_false() && brCond.is_false()));
+        return (falseIn | brCond) & (trueIn | brCond.negate());
       }
     }
 
