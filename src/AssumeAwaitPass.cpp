@@ -107,7 +107,8 @@ namespace {
     if (auto *op = llvm::dyn_cast<llvm::ZExtOperator>(v))
       return get_condition(op->getOperand(0), negate);
     if (auto *op = llvm::dyn_cast<llvm::Instruction>(v)) {
-      if (op->getOpcode() == llvm::Instruction::ZExt) {
+      if (op->getOpcode() == llvm::Instruction::ZExt
+          || op->getOpcode() == llvm::Instruction::SExt) {
         return get_condition(op->getOperand(0), negate);
       } else if(op->getOpcode() == llvm::Instruction::Xor) {
         if (is_true(op->getOperand(0)) || is_true(op->getOperand(1))) {
