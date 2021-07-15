@@ -123,6 +123,7 @@ plptest_safestack_21_easy Forbid : 13
 plptest_safestack_21_inlined Forbid : 13
 plptest_safestack_21_inlined_xchg Forbid : 13
 plptest_safestack_21 Forbid : 17
+plptest_burns_nobound Forbid : 9
 # These should fail (>1 trace)
 plptest_leaky_counter Forbid : 4
 # Currently failing, pass is >1 trace
