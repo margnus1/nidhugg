@@ -648,6 +648,7 @@ namespace {
         // purity; if not, the condition should just be false. That way,
         // we won't waste good conditions in the overapproximations
         PurityCondition brCond = getBranchCondition(branch->getCondition());
+        collapseTautologies(brCond);
         if (!L->contains(trueSucc)) {
           assert(trueIn.is_false());
           if (falseIn.is_true()) return brCond.negate();
@@ -782,6 +783,7 @@ namespace {
     PurityConditions conds;
     const auto &blocks = L->getBlocks();
     bool changed;
+    unsigned count = 0;
     // llvm::dbgs() << "Analysing " << *L;
     do {
       changed = false;
@@ -796,14 +798,15 @@ namespace {
         }
         if (conds[BB] != cond) {
           // llvm::dbgs() << " " << BB->getName() << ": " << cond << "\n";
-          if (!(cond < conds[BB])) {
-            llvm::dbgs() << cond << "\n" << conds[BB] << "\n";
-            assert(cond < conds[BB]);
-            abort();
-          }
           changed = true;
           conds[BB] = cond;
         }
+      }
+      if (++count > 1000) {
+        llvm::dbgs() << "Analysis of loop in "
+                     << L->getHeader()->getParent()->getName()
+                     << " did not terminate after 1000 iterations\n";
+        abort();
       }
     } while(changed);
     return conds;
