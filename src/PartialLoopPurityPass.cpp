@@ -22,6 +22,7 @@
 #include "CheckModule.h"
 #include "PartialLoopPurityPass.h"
 #include "SpinAssumePass.h"
+#include "Debug.h"
 
 #include <llvm/Pass.h>
 #include <llvm/Analysis/LoopPass.h>
@@ -72,38 +73,6 @@ typedef llvm::Instruction TerminatorInst;
 #endif
 
 namespace {
-  class InliningCandidatePass : public llvm::FunctionPass {
-    std::unordered_map<llvm::Function *, bool> may_inline;
-  public:
-    static char ID;
-    InliningCandidatePass() : llvm::FunctionPass(ID) {};
-    void getAnalysisUsage(llvm::AnalysisUsage &AU) const override {
-      AU.setPreservesAll();
-    }
-    bool runOnFunction(llvm::Function &F) override {
-      for (llvm::BasicBlock &BB : F.getBasicBlockList()) {
-        for (llvm::Instruction &I : BB.getInstList()) {
-          if (llvm::isa<llvm::CallInst>(I) || llvm::isa<llvm::InvokeInst>(I)
-#ifdef HAS_LLVM_CALLBRINST
-              || llvm::isa<llvm::CallBrInst>(I)
-#endif
-              ) {
-            may_inline[&F] = false;
-            return true;
-          }
-        }
-      }
-      may_inline[&F] = true;
-      return false;
-    }
-    const decltype(may_inline) &getResult() const { return may_inline; }
-  };
-  char InliningCandidatePass::ID = 0;
-
-  static llvm::RegisterPass<InliningCandidatePass> _icp_registration
-  ("plp-inlining-candidate-analysis",
-   "Analysis for partial-loop-purity ");
-
   /* Not reentrant */
   static const llvm::DominatorTree *DominatorTree;
   static const std::unordered_map<llvm::Function *, bool> *may_inline;
@@ -552,7 +521,7 @@ namespace {
   }
 
   void maybeResolvePhi(llvm::Value *&V, const llvm::BasicBlock *From,
-                              const llvm::BasicBlock *To) {
+                       const llvm::BasicBlock *To) {
     llvm::PHINode *N = llvm::dyn_cast_or_null<llvm::PHINode>(V);
     if (!N || N->getParent() != To) return;
     V = N->getIncomingValueForBlock(From);
@@ -812,6 +781,30 @@ namespace {
     return conds;
   }
 
+  bool functionMayInline(llvm::Function &F) {
+    for (llvm::BasicBlock &BB : F.getBasicBlockList()) {
+      for (llvm::Instruction &I : BB.getInstList()) {
+        if (llvm::isa<llvm::CallInst>(I) || llvm::isa<llvm::InvokeInst>(I)
+#ifdef HAS_LLVM_CALLBRINST
+            || llvm::isa<llvm::CallBrInst>(I)
+#endif
+            ) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  auto getInliningCandidates(llvm::Module &M) {
+    std::unordered_map<llvm::Function *, bool> may_inline;
+    for (llvm::Function &F : M.functions()) {
+      if (F.empty()) continue;
+      may_inline[&F] = functionMayInline(F);
+    }
+    return may_inline;
+  }
+
   void findCallsInLoop(llvm::SmallPtrSet<llvm::CallInst*, 4> &calls,
                        llvm::Loop *L) {
     for (llvm::BasicBlock *BB : L->blocks()) {
@@ -826,6 +819,60 @@ namespace {
         }
       }
     }
+  }
+
+  bool recurseLoops(llvm::Loop *L, const std::function<bool(llvm::Loop*)> &f) {
+    bool changed = false;
+    for (auto it = L->begin(); it != L->end(); ++it) {
+      changed |= recurseLoops(*it, f);
+    }
+    changed |= f(L);
+    return changed;
+  }
+
+  bool foreachLoop(const llvm::LoopInfo &LI,
+                   const std::function<bool(llvm::Loop*)> &f) {
+    bool changed = false;
+    for (auto it = LI.begin(); it != LI.end(); ++it) {
+      changed |= recurseLoops(*it, f);
+    }
+    return changed;
+  }
+
+  auto analyseInliningNeeds(llvm::Function &F) {
+    llvm::SmallPtrSet<llvm::CallInst*, 4> calls;
+    llvm::LoopInfo LI(*DominatorTree);
+
+    foreachLoop(LI, [&](llvm::Loop *L) {
+      assert(!inlining_needed);
+      PurityConditions conditions = analyseLoop(L);
+      PurityCondition headerCond = conditions[L->getHeader()];
+      if (!headerCond.is_false() && inlining_needed) {
+        findCallsInLoop(calls, L);
+      }
+      inlining_needed = false;
+      return false;
+    });
+
+    return calls;
+  }
+
+  bool doInline(llvm::Function &F,
+                 llvm::SmallPtrSet<llvm::CallInst*, 4> &calls) {
+    for (llvm::CallInst *CI : calls) {
+      llvm::InlineFunctionInfo ifi;
+      llvm::dbgs() << "Inlining call to " << CI->getCalledFunction()->getName()
+                   << " in " << F.getName() << "\n";
+#if LLVM_VERSION_MAJOR >= 11
+      llvm::InlineResult res = llvm::InlineFunction(*CI, ifi);
+      assert(res.isSuccess());
+#else
+      bool success = llvm::InlineFunction(CI, ifi);
+      assert(success);
+#endif
+      assert(ifi.InlinedCalls.size() == 0);
+    }
+    return !calls.empty();
   }
 
   bool dominates_or_equals(const llvm::DominatorTree &DT,
@@ -886,153 +933,88 @@ namespace {
     llvm_unreachable("All cases covered in findInsertionPoint");
   }
 
-  class PLPInlinePreAnalysisPass : public llvm::FunctionPass{
-    std::unordered_map<llvm::Function*,llvm::SmallPtrSet<llvm::CallInst*, 4>> calls;
-    void runOnLoop(llvm::Loop *L) {
-      const llvm::DominatorTree &DT
-        = getAnalysis<llvm::LLVM_DOMINATOR_TREE_PASS>().getDomTree();
-      assert(!DominatorTree);
-      DominatorTree = &DT;
-      assert(!may_inline);
-      may_inline = &getAnalysis<InliningCandidatePass>().getResult();
-      assert(!inlining_needed);
-
-      PurityConditions conditions = analyseLoop(L);
-      PurityCondition headerCond = conditions[L->getHeader()];
-      if (!headerCond.is_false() && inlining_needed) {
-        findCallsInLoop(calls[L->getHeader()->getParent()], L);
-      }
-
-      DominatorTree = nullptr;
-      may_inline = nullptr;
-      inlining_needed = false;
-    };
-    void recurseLoops(llvm::Loop *L) {
-      for (auto it = L->begin(); it != L->end(); ++it) {
-        recurseLoops(*it);
-      }
-      // L->print(llvm::dbgs(), 1);
-      runOnLoop(L);
-    }
-  public:
-    static char ID;
-    PLPInlinePreAnalysisPass() : llvm::FunctionPass(ID) {};
-    void getAnalysisUsage(llvm::AnalysisUsage &AU) const override {
-      AU.addRequired<llvm::LLVM_DOMINATOR_TREE_PASS>();
-      AU.addRequired<InliningCandidatePass>();
-      AU.addRequired<llvm::LoopInfoWrapperPass>();
-      AU.setPreservesAll();
-    };
-    bool runOnFunction(llvm::Function &F) override {
-      llvm::LoopInfo &LI = getAnalysis<llvm::LoopInfoWrapperPass>().getLoopInfo();
-      // LI.print(llvm::dbgs());
-
-      // llvm::dbgs() << "Analysing loops in " << F.getName() << "\n";
-      for (auto it = LI.begin(); it != LI.end(); ++it) {
-        assert((*it)->getHeader()->getParent() == &F);
-        recurseLoops(*it);
-      }
+  bool runOnLoop(llvm::Loop *L) {
+    // Debug::warn(("plp.code." + L->getHeader()->getParent()->getName()).str())
+    //   << "Analysing " << L->getHeader()->getParent()->getName() << ":\n"
+    //   << *L->getHeader()->getParent();
+    assert(!may_inline);
+    assert(!inlining_needed);
+    PurityConditions conditions = analyseLoop(L);
+    PurityCondition headerCond = conditions[L->getHeader()];
+    assert(!inlining_needed);
+    if (headerCond.is_false()) {
+      // llvm::dbgs() << "Loop " << L->getHeader()->getParent()->getName() << ":"
+      //              << *L << " isn't pure\n";
       return false;
+    } else {
+      llvm::dbgs() << "Partially pure loop found in "
+                   << L->getHeader()->getParent()->getName() << "():\n";
+      L->print(llvm::dbgs(), 2);
+      llvm::dbgs() << " Purity condition: " << headerCond << "\n";
     }
-    const decltype(calls) &getResult() const { return calls; }
-  };
-  char PLPInlinePreAnalysisPass::ID = 0;
-  static llvm::RegisterPass<PLPInlinePreAnalysisPass> _ipa_registration
-  ("plp-inlining-pre-analysis-pass",
-   "Analysis to determine required inlines for partial-loop-purity.");
 
-  class PLPInlinerPass : public llvm::FunctionPass{
-  public:
-    static char ID;
-    PLPInlinerPass() : llvm::FunctionPass(ID) {};
-    void getAnalysisUsage(llvm::AnalysisUsage &AU) const override {
-      AU.addRequired<PLPInlinePreAnalysisPass>();
-      AU.addPreserved<DeclareAssumePass>();
+    llvm::Instruction *I = findInsertionPoint(L, *DominatorTree, headerCond);
+    llvm::dbgs() << " Insertion point: " << *I << "\n";
+    llvm::Value *Cond;
+    if (headerCond.pred.is_true()) {
+      Cond = llvm::ConstantInt::getTrue(L->getHeader()->getContext());
+    } else {
+      Cond = llvm::ICmpInst::Create
+        (getPredicateOpcode(headerCond.pred.op),
+         llvm::CmpInst::getInversePredicate(headerCond.pred.op),
+         headerCond.pred.lhs, headerCond.pred.rhs, "negated.pp.cond", I);
     }
-    bool runOnFunction(llvm::Function &F) override {
-      auto &calls = getAnalysis<PLPInlinePreAnalysisPass>().getResult();
-      auto it = calls.find(&F);
-      if (it != calls.end()) {
-        for (llvm::CallInst *CI : it->second) {
-          llvm::InlineFunctionInfo ifi;
-          llvm::dbgs() << "Inlining call to " << CI->getCalledFunction()->getName()
-                       << " in " << F.getName() << "\n";
-          bool success = llvm::InlineFunction(CI, ifi);
-          assert(success);
-          assert(ifi.InlinedCalls.size() == 0);
-        }
-        return true;
-      } else {
-        return false;
+    llvm::Function *F_assume = L->getHeader()->getParent()->getParent()
+      ->getFunction("__VERIFIER_assume");
+    {
+      llvm::Type *arg_ty = F_assume->arg_begin()->getType();
+      assert(arg_ty->isIntegerTy());
+      if(arg_ty->getIntegerBitWidth() != 1){
+        Cond = new llvm::ZExtInst(Cond, arg_ty,"",I);
       }
     }
-  };
-  char PLPInlinerPass::ID = 0;
-  static llvm::RegisterPass<PLPInlinerPass> _inliner_registration
-  ("plp-inlining-pass",
-   "Pass inlining some select functions to enable partial-loop-purity transformation.");
+    llvm::CallInst::Create(F_assume,{Cond},"",I);
 
+    // llvm::dbgs() << "Rewritten:\n";
+    // llvm::dbgs() << *L->getHeader()->getParent();;
+
+    return true;
+  }
 }
 
 void PartialLoopPurityPass::getAnalysisUsage(llvm::AnalysisUsage &AU) const{
-  AU.addRequired<llvm::LLVM_DOMINATOR_TREE_PASS>();
   AU.addRequired<DeclareAssumePass>();
-  AU.addRequired<PLPInlinerPass>();
   AU.addPreserved<DeclareAssumePass>();
 }
 
-bool PartialLoopPurityPass::runOnLoop(llvm::Loop *L, llvm::LPPassManager &LPM){
-  // llvm::dbgs() << "Analysing " << L->getHeader()->getParent()->getName() << ":\n";
-  // llvm::dbgs() << *L->getHeader()->getParent();
-  const llvm::DominatorTree &DT
-    = getAnalysis<llvm::LLVM_DOMINATOR_TREE_PASS>().getDomTree();
-  assert(!DominatorTree);
-  DominatorTree = &DT;
-  assert(!may_inline);
-  assert(!inlining_needed);
-  PurityConditions conditions = analyseLoop(L);
-  PurityCondition headerCond = conditions[L->getHeader()];
-  assert(!inlining_needed);
-  if (headerCond.is_false()) {
-    // llvm::dbgs() << "Loop " << L->getHeader()->getParent()->getName() << ":"
-    //              << *L << " isn't pure\n";
-    DominatorTree = nullptr;
-    return false;
-  } else {
-    llvm::dbgs() << "Partially pure loop found in "
-                 << L->getHeader()->getParent()->getName() << "():\n";
-    L->print(llvm::dbgs(), 2);
-    llvm::dbgs() << " Purity condition: " << headerCond << "\n";
+bool PartialLoopPurityPass::runOnModule(llvm::Module &M) {
+  bool changed = false;
+
+  auto local_may_inline = getInliningCandidates(M);
+  may_inline = &local_may_inline;
+
+  for (llvm::Function &F : M.functions()) {
+    if (F.empty()) continue; /* We do nothing on declarations */
+    llvm::DominatorTree DT(F);
+    DominatorTree = &DT;
+    auto calls = analyseInliningNeeds(F);
+    changed |= doInline(F, calls);
+    assert(!llvm::verifyFunction(F, &llvm::dbgs()));
   }
 
-  llvm::Instruction *I = findInsertionPoint(L, DT, headerCond);
-  llvm::dbgs() << " Insertion point: " << *I << "\n";
-  llvm::Value *Cond;
-  if (headerCond.pred.is_true()) {
-    Cond = llvm::ConstantInt::getTrue(L->getHeader()->getContext());
-  } else {
-    Cond = llvm::ICmpInst::Create
-      (getPredicateOpcode(headerCond.pred.op),
-       llvm::CmpInst::getInversePredicate(headerCond.pred.op),
-       headerCond.pred.lhs, headerCond.pred.rhs, "negated.pp.cond", I);
-  }
-  llvm::Function *F_assume = L->getHeader()->getParent()->getParent()
-    ->getFunction("__VERIFIER_assume");
-  {
-    llvm::Type *arg_ty = F_assume->arg_begin()->getType();
-    assert(arg_ty->isIntegerTy());
-    if(arg_ty->getIntegerBitWidth() != 1){
-      Cond = new llvm::ZExtInst(Cond, arg_ty,"",I);
-    }
-  }
-  llvm::CallInst::Create(F_assume,{Cond},"",I);
+  may_inline = nullptr;
 
-  // llvm::dbgs() << "Rewritten:\n";
-  // llvm::dbgs() << *L->getHeader()->getParent();
-  assert(!llvm::verifyFunction(*L->getHeader()->getParent(), &llvm::dbgs()));
+  for (llvm::Function &F : M.functions()) {
+    if (F.empty()) continue; /* We do nothing on declarations */
+    llvm::DominatorTree DT(F);
+    DominatorTree = &DT;
+    llvm::LoopInfo LI(DT);
+    changed |= foreachLoop(LI, runOnLoop);
+    assert(!llvm::verifyFunction(F, &llvm::dbgs()));
+  }
 
   DominatorTree = nullptr;
-  return true;
+  return changed;
 }
 
 char PartialLoopPurityPass::ID = 0;

@@ -25,12 +25,12 @@
 #include <llvm/Pass.h>
 #include <llvm/Analysis/LoopPass.h>
 
-class PartialLoopPurityPass : public llvm::LoopPass{
+class PartialLoopPurityPass : public llvm::ModulePass{
 public:
   static char ID;
-  PartialLoopPurityPass() : llvm::LoopPass(ID) {};
-  virtual void getAnalysisUsage(llvm::AnalysisUsage &AU) const;
-  virtual bool runOnLoop(llvm::Loop *L, llvm::LPPassManager &LPM);
+  PartialLoopPurityPass() : llvm::ModulePass(ID) {};
+  void getAnalysisUsage(llvm::AnalysisUsage &AU) const override;
+  bool runOnModule(llvm::Module &M) override;
 };
 
 #endif
