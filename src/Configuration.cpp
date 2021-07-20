@@ -107,9 +107,11 @@ static llvm::cl::alias cl_robustness("robustness",llvm::cl::Hidden,
 
 static llvm::cl::OptionCategory cl_transformation_cat("Module Transformation Passes");
 
-static llvm::cl::opt<bool> cl_transform_no_spin_assume("no-spin-assume",llvm::cl::NotHidden,llvm::cl::cat(cl_transformation_cat),
-                                                       llvm::cl::desc("Disable the spin assume pass in module\n"
-                                                                      "transformation."));
+static llvm::cl::opt<bool> cl_transform_no_spin_assume("no-spin-assume",llvm::cl::NotHidden,llvm::cl::cat(cl_transformation_cat));
+
+static llvm::cl::opt<bool> cl_transform_spin_assume("spin-assume",llvm::cl::NotHidden,llvm::cl::cat(cl_transformation_cat),
+                                                    llvm::cl::desc("Enable the spin assume pass in module\n"
+                                                                   "transformation."));
 static llvm::cl::opt<bool> cl_transform_no_assume_await
 ("no-assume-await",llvm::cl::NotHidden,llvm::cl::cat(cl_transformation_cat),
  llvm::cl::desc("Disable the assume to await pass in module\n"
@@ -187,7 +189,7 @@ const std::set<std::string> &Configuration::commandline_opts(){
     "smtlib",
     "source","optimal","observers","rf",
     "check-robustness",
-    "no-spin-assume",
+    "spin-assume",
     "no-partial-loop-purity",
     "no-assume-await",
     "unroll",
@@ -214,7 +216,7 @@ void Configuration::assign_by_commandline(){
   c11 = cl_c11;
   dpor_algorithm = cl_dpor_algorithm;
   check_robustness = cl_check_robustness;
-  transform_spin_assume = !cl_transform_no_spin_assume;
+  transform_spin_assume = cl_transform_spin_assume;
   transform_dead_code_elim = !cl_transform_no_dead_code_elim;
   transform_partial_loop_purity = !cl_transform_no_partial_loop_purity;
   transform_assume_await = !cl_transform_no_assume_await;
@@ -277,9 +279,9 @@ void Configuration::check_commandline(){
         << "WARNING: Program arguments (argv for test case) ignored in presence of --transform.\n";
     }
   }else{
-    if(cl_transform_no_spin_assume.getNumOccurrences()){
+    if(cl_transform_spin_assume.getNumOccurrences()){
       Debug::warn("Configuration::check_commandline:no:transform:transform-no-spin-assume")
-        << "WARNING: --no-spin-assume ignored in absence of --transform.\n";
+        << "WARNING: --spin-assume ignored in absence of --transform.\n";
     }
     if(cl_transform_no_assume_await.getNumOccurrences()){
       Debug::warn("Configuration::check_commandline:no:transform:transform-no-assume-await")
@@ -350,6 +352,12 @@ void Configuration::check_commandline(){
     Debug::warn("Configuration::check_commandline:c11:no-race-detect")
       << "WARNING: The race detector for --c11 is not yet implemented."
       << " Bugs might be missed or cause nondeterminism.\n";
+  }
+
+  if (cl_transform_no_spin_assume) {
+    Debug::warn("Configuration::check_commandline:no-spin-assume-deprecation")
+      << "WARNING: The --no-spin-assume flag is now ignored, as the spin-assume"
+      << " transformation is disabled by default.\n";
   }
 }
 

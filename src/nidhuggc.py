@@ -27,7 +27,7 @@ nidhuggcparams = [
     {'name':'--clangxx','help':'Specify the path to clang++.','param':'PATH'},
     {'name':'--nidhugg','help':'Specify the path to the nidhugg binary.','param':'PATH'},
     {'name':'--no-partial-loop-purity','help':'Don\'t reduce partially pure loops with assumes before calling nidhugg.','param':False},
-    {'name':'--no-spin-assume','help':'Don\'t use the spin-assume transformation on module before calling nidhugg.','param':False},
+    {'name':'--spin-assume','help':'Use the spin-assume transformation on module before calling nidhugg.','param':False},
     {'name':'--no-dead-code-elim','help':'Don\'t use the dead code elimination pass on module before calling nidhugg.','param':False},
     {'name':'--no-assume-await','help':'Don\'t use the assume-await transformation on module before calling nidhugg.','param':False},
     {'name':'--no-assume-xchgawait','help':'Don\'t transform assume statements to xchg-await before calling nidhugg.','param':False},
@@ -50,7 +50,7 @@ nidhuggcparamaliases = {
     '-clangxx':'--clangxx',
     '-nidhugg':'--nidhugg',
     '-no-partial-loop-purity':'--no-partial-loop-purity',
-    '-no-spin-assume':'--no-spin-assume',
+    '-spin-assume':'--spin-assume',
     '-no-dead-code-elim':'--no-dead-code-elim',
     '-no-assume-await':'--no-assume-await',
     '-no-assume-xchgawait':'--no-assume-xchgawait',
@@ -286,7 +286,7 @@ def main():
                 NIDHUGG=argarg
             elif argname == '--no-partial-loop-purity':
                 transformargs.append(argname)
-            elif argname == '--no-spin-assume':
+            elif argname == '--spin-assume':
                 transformargs.append(argname)
             elif argname == '--no-dead-code-elim':
                 transformargs.append(argname)
