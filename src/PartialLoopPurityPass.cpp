@@ -344,7 +344,7 @@ namespace {
         llvm::dbgs() << "Meeting insertion points general case not implemented:\n";
         llvm::dbgs() << "    " << *insertion_point << "\n"
                      << " and" << *other.insertion_point << "\n";
-        assert(false);
+        // assert(false);
         return false; // Underapproximating for now
       }
 
