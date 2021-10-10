@@ -21,6 +21,7 @@
 #include "LoopBoundPass.h"
 #include "SpinAssumePass.h"
 #include "DeadCodeElimPass.h"
+#include "CastElimPass.h"
 #include "PartialLoopPurityPass.h"
 #include "AssumeAwaitPass.h"
 #include "StrModule.h"
@@ -108,6 +109,9 @@ namespace Transform {
      */
     PM.add(new ClearOptnonePass());
     PM.add(llvm::createPromoteMemoryToRegisterPass());
+    if (conf.transform_cast_elim) {
+      PM.add(new CastElimPass());
+    }
     if (conf.transform_dead_code_elim) {
       PM.add(new DeadCodeElimPass());
     }

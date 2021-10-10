@@ -6,6 +6,7 @@ libnidhugg_a_SOURCES = \
   AssumeAwaitPass.cpp AssumeAwaitPass.h \
   AwaitCond.cpp AwaitCond.h \
   BVClock.cpp BVClock.h \
+  CastElimPass.cpp CastElimPass.h \
   CheckModule.cpp CheckModule.h \
   Configuration.cpp Configuration.h \
   CPid.cpp CPid.h \

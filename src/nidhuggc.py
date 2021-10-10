@@ -29,6 +29,7 @@ nidhuggcparams = [
     {'name':'--no-partial-loop-purity','help':'Don\'t reduce partially pure loops with assumes before calling nidhugg.','param':False},
     {'name':'--spin-assume','help':'Use the spin-assume transformation on module before calling nidhugg.','param':False},
     {'name':'--no-dead-code-elim','help':'Don\'t use the dead code elimination pass on module before calling nidhugg.','param':False},
+    {'name':'--no-cast-elim','help':'Don\'t use the cast elimination pass on module before calling nidhugg.','param':False},
     {'name':'--no-assume-await','help':'Don\'t use the assume-await transformation on module before calling nidhugg.','param':False},
     {'name':'--no-assume-xchgawait','help':'Don\'t transform assume statements to xchg-await before calling nidhugg.','param':False},
     {'name':'--unroll','help':'Use unroll transformation on module before calling nidhugg.','param':'N'},
@@ -52,6 +53,7 @@ nidhuggcparamaliases = {
     '-no-partial-loop-purity':'--no-partial-loop-purity',
     '-spin-assume':'--spin-assume',
     '-no-dead-code-elim':'--no-dead-code-elim',
+    '-no-cast-elim':'--no-cast-elim',
     '-no-assume-await':'--no-assume-await',
     '-no-assume-xchgawait':'--no-assume-xchgawait',
     '-unroll':'--unroll',
@@ -289,6 +291,8 @@ def main():
             elif argname == '--spin-assume':
                 transformargs.append(argname)
             elif argname == '--no-dead-code-elim':
+                transformargs.append(argname)
+            elif argname == '--no-cast-elim':
                 transformargs.append(argname)
             elif argname == '--no-assume-await':
                 transformargs.append(argname)
