@@ -22,6 +22,7 @@
 #include <llvm/ADT/SmallPtrSet.h>
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/Analysis/ValueTracking.h>
+#include <llvm/Support/Debug.h>
 
 #include "CastElimPass.h"
 #include "llvm/Support/Casting.h"
@@ -63,7 +64,7 @@ bool CastElimPass::runOnFunction(llvm::Function &F) {
   }
 
   if (eliminated != 0)
-    llvm::dbgs() << "Eliminated " << eliminated << " casts from " << F.getName() << "\n";
+    llvm::dbgs() << "Eliminated " << std::to_string(eliminated) << " casts from " << F.getName() << "\n";
   return eliminated != 0;
 }
 
