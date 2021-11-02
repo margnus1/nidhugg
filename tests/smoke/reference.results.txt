@@ -90,6 +90,7 @@ parker_reproc_1_obs Forbid : 5
 dekker_lock_trylock_opt Forbid : 4
 await_mud_opt Forbid : 3
 await_muddier_opt Forbid : 4
+linuxrwlocks_repro Forbid : 17
 
 # Optimal/Observers with xchg-await
 xchgawait_vs_inc_chain_opt Forbid : 3
@@ -108,6 +109,7 @@ xchgawait_vs_indep_inc Forbid : 3
 await_vs_indep_inc Forbid : 3
 await_vs_indep_inc_2 Forbid : 3
 await_vs_indep_inc_easy Forbid : 3
+linuxrwlocks_repro_ifaa Forbid : 12
 
 # Optimal/Observers with commuting rmws
 safestack_c21_21_opt_rmwcomm Forbid : 21

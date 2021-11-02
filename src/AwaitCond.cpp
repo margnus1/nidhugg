@@ -25,27 +25,41 @@
 #include <llvm/Support/SwapByteOrder.h> /* On llvm >= 11 */
 
 namespace {
-  int smemcmp(const void *lhs, const void *rhs, std::size_t count) {
+  int apcmp(const void *lhsv, const void *rhsv, std::size_t count) {
+    if (llvm::sys::IsBigEndianHost) {
+      return std::memcmp(lhsv, rhsv, count);
+    } else {
+      const uint8_t *lhs = static_cast<const uint8_t*>(lhsv);
+      const uint8_t *rhs = static_cast<const uint8_t*>(rhsv);
+      while(count--) {
+        if (lhs[count] > rhs[count]) return 1;
+        else if (lhs[count] < rhs[count]) return -1;
+      }
+      return 0;
+    }
+  }
+
+  int sapcmp(const void *lhs, const void *rhs, std::size_t count) {
     if (!count) return 0;
     std::size_t big_byte_index;
     if (llvm::sys::IsBigEndianHost) {
-      big_byte_index = count-1;
-    } else {
       big_byte_index = 0;
+    } else {
+      big_byte_index = count-1;
     }
     bool lsign = ((const char*)lhs)[big_byte_index] >> (CHAR_BIT-1);
     bool rsign = ((const char*)rhs)[big_byte_index] >> (CHAR_BIT-1);
     if (lsign != rsign) return lsign ? -1 : 1;
-    return std::memcmp(lhs, rhs, count);
+    return apcmp(lhs, rhs, count);
   }
 }
 
 bool AwaitCond::satisfied_by(const void *data, std::size_t size) const {
   int cmp;
   if ((static_cast<unsigned>(op) >> 3) & 0b1) {
-    cmp = smemcmp(data, operand.get(), size);
+    cmp = sapcmp(data, operand.get(), size);
   } else {
-    cmp = std::memcmp(data, operand.get(), size);
+    cmp = apcmp(data, operand.get(), size);
   }
   unsigned shift;
   if (cmp < 0) {
