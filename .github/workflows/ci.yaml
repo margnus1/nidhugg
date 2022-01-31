@@ -80,7 +80,8 @@ jobs:
           context: .
           push: false
           file: Dockerfile.debug
+          tags: nidhugg-debug
       - name: Run a smoke test
-        run: docker run --rm -t -v `pwd`:`pwd` -w `pwd` ${{ steps.build.outputs.digest }} nidhuggc -sc tests/smoke/C-tests/mutex_hard.c
+        run: docker run --rm -t -v `pwd`:`pwd` -w `pwd` nidhugg-debug nidhuggc -sc tests/smoke/C-tests/mutex_hard.c
       - name: Run the unit tests
-        run: docker run --rm -t ${{ steps.build.outputs.digest }} nidhugg-unittest
+        run: docker run --rm -t nidhugg-debug nidhugg-unittest
