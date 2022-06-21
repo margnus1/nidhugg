@@ -28,6 +28,7 @@
 #include "vecset.h"
 
 #include <boost/container/flat_map.hpp>
+#include <llvm/ADT/SmallVector.h>
 #include <llvm/Analysis/CallGraph.h>
 #include <llvm/Analysis/LoopPass.h>
 #include <llvm/Analysis/ValueTracking.h>
@@ -959,7 +960,7 @@ namespace {
       return true;
     }
     if (!L->contains(To)) return false;
-    if (rpo.backedges.count({From, To})) return false;
+    if (rpo.is_backedge(From, To)) return false;
     PurityCondition in = conds[To].map([From, To](BinaryPredicate term) {
       maybeResolvePhi(term.rhs, From, To);
       maybeResolvePhi(term.lhs, From, To);
