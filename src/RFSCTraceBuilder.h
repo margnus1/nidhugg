@@ -30,59 +30,64 @@
 #include "RFSCUnfoldingTree.h"
 #include "RFSCDecisionTree.h"
 
+#include <map>
+#include <memory>
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
-#include <boost/container/flat_map.hpp>
+#include <utility>
+#include <vector>
 
+#include <boost/container/flat_map.hpp>
 
 class RFSCTraceBuilder final : public TSOPSOTraceBuilder{
 public:
   RFSCTraceBuilder(RFSCDecisionTree &desicion_tree_,
                    RFSCUnfoldingTree &unfolding_tree_,
                    const Configuration &conf = Configuration::default_conf);
-  virtual ~RFSCTraceBuilder() override;
-  virtual bool schedule(int *proc, int *aux, int *alt, bool *dryrun) override;
-  virtual void refuse_schedule() override;
-  virtual void mark_available(int proc, int aux = -1) override;
-  virtual void mark_unavailable(int proc, int aux = -1) override;
-  virtual void cancel_replay() override;
-  virtual bool is_replaying() const override;
-  virtual void metadata(const llvm::MDNode *md) override;
-  virtual bool sleepset_is_empty() const override;
-  virtual bool check_for_cycles() override;
-  virtual Trace *get_trace() const override;
-  virtual bool reset() override;
-  virtual IID<CPid> get_iid() const override;
+  ~RFSCTraceBuilder() override;
+  bool schedule(int *proc, int *aux, int *alt, bool *dryrun) override;
+  void refuse_schedule() override;
+  void mark_available(int proc, int aux = -1) override;
+  void mark_unavailable(int proc, int aux = -1) override;
+  void cancel_replay() override;
+  bool is_replaying() const override;
+  void metadata(const llvm::MDNode *md) override;
+  bool sleepset_is_empty() const override;
+  bool check_for_cycles() override;
+  Trace *get_trace() const override;
+  bool reset() override;
+  IID<CPid> get_iid() const override;
 
-  virtual void debug_print() const override;
-  virtual bool cond_branch(bool cnd) override { return true; }
+  void debug_print() const override;
+  bool cond_branch(bool cnd) override { return true; }
 
-  virtual NODISCARD bool spawn() override;
-  virtual NODISCARD bool store(const SymData &ml) override;
-  virtual NODISCARD bool atomic_store(const SymData &ml) override;
-  virtual NODISCARD bool atomic_rmw(const SymData &ml, RmwAction action) override;
-  virtual NODISCARD bool compare_exchange
+  NODISCARD bool spawn() override;
+  NODISCARD bool store(const SymData &ml) override;
+  NODISCARD bool atomic_store(const SymData &ml) override;
+  NODISCARD bool atomic_rmw(const SymData &ml, RmwAction action) override;
+  NODISCARD bool compare_exchange
   (const SymData &sd, const SymData::block_type expected, bool success) override;
-  virtual NODISCARD bool load(const SymAddrSize &ml) override;
-  virtual NODISCARD bool full_memory_conflict() override;
-  virtual NODISCARD bool fence() override;
-  virtual NODISCARD bool join(int tgt_proc) override;
-  virtual NODISCARD bool mutex_lock(const SymAddrSize &ml) override;
-  virtual NODISCARD bool mutex_lock_fail(const SymAddrSize &ml) override;
-  virtual NODISCARD bool mutex_trylock(const SymAddrSize &ml) override;
-  virtual NODISCARD bool mutex_unlock(const SymAddrSize &ml) override;
-  virtual NODISCARD bool mutex_init(const SymAddrSize &ml) override;
-  virtual NODISCARD bool mutex_destroy(const SymAddrSize &ml) override;
-  virtual NODISCARD bool cond_init(const SymAddrSize &ml) override;
-  virtual NODISCARD bool cond_signal(const SymAddrSize &ml) override;
-  virtual NODISCARD bool cond_broadcast(const SymAddrSize &ml) override;
-  virtual NODISCARD bool cond_wait(const SymAddrSize &cond_ml,
-                         const SymAddrSize &mutex_ml) override;
-  virtual NODISCARD bool cond_awake(const SymAddrSize &cond_ml,
-                          const SymAddrSize &mutex_ml) override;
-  virtual NODISCARD int cond_destroy(const SymAddrSize &ml) override;
-  virtual NODISCARD bool register_alternatives(int alt_count) override;
-  virtual long double estimate_trace_count() const override;
+  NODISCARD bool load(const SymAddrSize &ml) override;
+  NODISCARD bool full_memory_conflict() override;
+  NODISCARD bool fence() override;
+  NODISCARD bool join(int tgt_proc) override;
+  NODISCARD bool mutex_lock(const SymAddrSize &ml) override;
+  NODISCARD bool mutex_lock_fail(const SymAddrSize &ml) override;
+  NODISCARD bool mutex_trylock(const SymAddrSize &ml) override;
+  NODISCARD bool mutex_unlock(const SymAddrSize &ml) override;
+  NODISCARD bool mutex_init(const SymAddrSize &ml) override;
+  NODISCARD bool mutex_destroy(const SymAddrSize &ml) override;
+  NODISCARD bool cond_init(const SymAddrSize &ml) override;
+  NODISCARD bool cond_signal(const SymAddrSize &ml) override;
+  NODISCARD bool cond_broadcast(const SymAddrSize &ml) override;
+  NODISCARD bool cond_wait(const SymAddrSize &cond_ml,
+                           const SymAddrSize &mutex_ml) override;
+  NODISCARD bool cond_awake(const SymAddrSize &cond_ml,
+                            const SymAddrSize &mutex_ml) override;
+  NODISCARD int cond_destroy(const SymAddrSize &ml) override;
+  NODISCARD bool register_alternatives(int alt_count) override;
+  long double estimate_trace_count() const override;
 
   /* Perform planning of future executions. Requires the trace to be
    * maximal or sleepset blocked.
@@ -119,19 +124,19 @@ protected:
     const void *ml;
     bool operator<(const Access &a) const{
       return type < a.type || (type == a.type && ml < a.ml);
-    };
+    }
     bool operator==(const Access &a) const{
       return type == a.type && (type == NA || ml == a.ml);
-    };
-    Access() : type(NA), ml(0) {};
-    Access(Type t, const void *m) : type(t), ml(m) {};
+    }
+    Access() : type(NA), ml(0) {}
+    Access(Type t, const void *m) : type(t), ml(m) {}
   };
 
   /* Various information about a thread in the current execution. */
   class Thread{
   public:
     Thread(const CPid &cpid, int spawn_event)
-      : cpid(cpid), available(true), spawn_event(spawn_event) {};
+      : cpid(cpid), available(true), spawn_event(spawn_event) {}
     CPid cpid;
     /* Is the thread available for scheduling? */
     bool available;
@@ -172,7 +177,7 @@ protected:
    */
   class ByteInfo{
   public:
-    ByteInfo() : last_update(-1) {};
+    ByteInfo() : last_update(-1) {}
     /* An index into prefix, to the latest update that accessed this
      * byte. last_update == -1 if there has been no update to this
      * byte.
@@ -189,8 +194,8 @@ protected:
    */
   class Mutex{
   public:
-    Mutex() : last_access(-1), last_lock(-1), locked(false) {};
-    Mutex(int lacc) : last_access(lacc), last_lock(-1), locked(false) {};
+    Mutex() : last_access(-1), last_lock(-1), locked(false) {}
+    Mutex(int lacc) : last_access(lacc), last_lock(-1), locked(false) {}
     int last_access;
     int last_lock;
     bool locked;
@@ -204,8 +209,8 @@ protected:
   /* A CondVar represents a pthread_cond_t object. */
   class CondVar{
   public:
-    CondVar() : last_signal(-1) {};
-    CondVar(int init_idx) : last_signal(init_idx) {};
+    CondVar() : last_signal(-1) {}
+    CondVar(int init_idx) : last_signal(init_idx) {}
     /* Index in prefix of the latest call to either of
      * pthread_cond_init, pthread_cond_signal, or
      * pthread_cond_broadcast for this condition variable.
@@ -238,7 +243,7 @@ protected:
     Event(const IID<IPid> &iid, int alt = 0, SymEv sym = {})
       : alt(0), size(1), pinned(false),
         iid(iid), origin_iid(iid), md(0), clock(), may_conflict(false),
-        sym(std::move(sym)), sleep_branch_trace_count(0), decision_depth(-1) {};
+        sym(std::move(sym)), sleep_branch_trace_count(0), decision_depth(-1) {}
     /* Some instructions may execute in several alternative ways
      * nondeterministically. (E.g. malloc may succeed or fail
      * nondeterministically if Configuration::malloy_may_fail is set.)
@@ -295,20 +300,20 @@ protected:
 
     int get_decision_depth() const {
       return decision_depth;
-    };
+    }
     void set_decision(std::shared_ptr<DecisionNode> decision) {
       decision_ptr = std::move(decision);
       decision_depth = decision_ptr ? decision_ptr->depth : -1;
-    };
+    }
     void set_branch_decision(int decision, const std::shared_ptr<DecisionNode> &work_item) {
       decision_depth = decision;
       decision_ptr = decision == -1 ? nullptr : RFSCDecisionTree::find_ancestor(work_item, decision_depth);
-    };
+    }
 
     void decision_swap(Event &e) {
       std::swap(decision_ptr, e.decision_ptr);
       std::swap(decision_depth, e.decision_depth);
-    };
+    }
 
   private:
     /* The hierarchical order of events. */
@@ -360,19 +365,19 @@ protected:
     assert(aux == -1);
     assert(proc < int(threads.size()));
     return proc;
-  };
+  }
 
   Event &curev() {
     assert(0 <= prefix_idx);
     assert(prefix_idx < int(prefix.size()));
     return prefix[prefix_idx];
-  };
+  }
 
   const Event &curev() const {
     assert(0 <= prefix_idx);
     assert(prefix_idx < int(prefix.size()));
     return prefix[prefix_idx];
-  };
+  }
 
   /* Perform the logic of atomic_store(), aside from recording a
    * symbolic event.

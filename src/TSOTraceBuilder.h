@@ -22,69 +22,73 @@
 #define __TSO_TRACE_BUILDER_H__
 
 #include "TSOPSOTraceBuilder.h"
-#include "VClock.h"
-#include "SymEv.h"
-#include "WakeupTrees.h"
 #include "Option.h"
+#include "SymEv.h"
+#include "VClock.h"
+#include "WakeupTrees.h"
 
 #include <boost/container/flat_map.hpp>
+#include <map>
+#include <string>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 
 typedef llvm::SmallVector<SymEv,1> sym_ty;
 
 class TSOTraceBuilder : public TSOPSOTraceBuilder{
 public:
   TSOTraceBuilder(const Configuration &conf = Configuration::default_conf);
-  virtual ~TSOTraceBuilder() override;
-  virtual bool schedule(int *proc, int *aux, int *alt, bool *dryrun) override;
-  virtual void refuse_schedule() override;
-  virtual void mark_available(int proc, int aux = -1) override;
-  virtual void mark_unavailable(int proc, int aux = -1) override;
-  virtual void cancel_replay() override;
-  virtual bool is_replaying() const override;
-  virtual void metadata(const llvm::MDNode *md) override;
-  virtual bool sleepset_is_empty() const override;
-  virtual bool await_blocked() const override { return blocked_awaits.size(); }
-  virtual bool check_for_cycles() override;
-  virtual Trace *get_trace() const override;
-  virtual bool reset() override;
-  virtual IID<CPid> get_iid() const override;
+  ~TSOTraceBuilder() override;
+  bool schedule(int *proc, int *aux, int *alt, bool *dryrun) override;
+  void refuse_schedule() override;
+  void mark_available(int proc, int aux = -1) override;
+  void mark_unavailable(int proc, int aux = -1) override;
+  void cancel_replay() override;
+  bool is_replaying() const override;
+  void metadata(const llvm::MDNode *md) override;
+  bool sleepset_is_empty() const override;
+  bool await_blocked() const override { return blocked_awaits.size(); }
+  bool check_for_cycles() override;
+  Trace *get_trace() const override;
+  bool reset() override;
+  IID<CPid> get_iid() const override;
 
-  virtual void debug_print() const override;
+  void debug_print() const override;
 
-  virtual NODISCARD bool spawn() override;
-  virtual NODISCARD bool store(const SymData &ml) override;
-  virtual NODISCARD bool atomic_store(const SymData &ml) override;
-  virtual NODISCARD bool atomic_rmw(const SymData &ml, RmwAction action) override;
-  virtual NODISCARD bool xchg_await(const SymData &ml, AwaitCond cond) override;
-  virtual NODISCARD bool xchg_await_fail(const SymData &ml, AwaitCond cond) override;
+  NODISCARD bool spawn() override;
+  NODISCARD bool store(const SymData &ml) override;
+  NODISCARD bool atomic_store(const SymData &ml) override;
+  NODISCARD bool atomic_rmw(const SymData &ml, RmwAction action) override;
+  NODISCARD bool xchg_await(const SymData &ml, AwaitCond cond) override;
+  NODISCARD bool xchg_await_fail(const SymData &ml, AwaitCond cond) override;
 
-  virtual NODISCARD bool compare_exchange
+  NODISCARD bool compare_exchange
   (const SymData &sd, const SymData::block_type expected, bool success) override;
-  virtual NODISCARD bool load(const SymAddrSize &ml) override;
-  virtual NODISCARD bool load_await(const SymAddrSize &ml, AwaitCond cond)
+  NODISCARD bool load(const SymAddrSize &ml) override;
+  NODISCARD bool load_await(const SymAddrSize &ml, AwaitCond cond) override;
+  NODISCARD bool load_await_fail(const SymAddrSize &ml, AwaitCond cond)
     override;
-  virtual NODISCARD bool load_await_fail(const SymAddrSize &ml, AwaitCond cond)
-    override;
-  virtual NODISCARD bool full_memory_conflict() override;
-  virtual NODISCARD bool fence() override;
-  virtual NODISCARD bool join(int tgt_proc) override;
-  virtual NODISCARD bool mutex_lock(const SymAddrSize &ml) override;
-  virtual NODISCARD bool mutex_lock_fail(const SymAddrSize &ml) override;
-  virtual NODISCARD bool mutex_trylock(const SymAddrSize &ml) override;
-  virtual NODISCARD bool mutex_unlock(const SymAddrSize &ml) override;
-  virtual NODISCARD bool mutex_init(const SymAddrSize &ml) override;
-  virtual NODISCARD bool mutex_destroy(const SymAddrSize &ml) override;
-  virtual NODISCARD bool cond_init(const SymAddrSize &ml) override;
-  virtual NODISCARD bool cond_signal(const SymAddrSize &ml) override;
-  virtual NODISCARD bool cond_broadcast(const SymAddrSize &ml) override;
-  virtual NODISCARD bool cond_wait(const SymAddrSize &cond_ml,
-                         const SymAddrSize &mutex_ml) override;
-  virtual NODISCARD bool cond_awake(const SymAddrSize &cond_ml,
-                          const SymAddrSize &mutex_ml) override;
-  virtual int cond_destroy(const SymAddrSize &ml) override;
-  virtual NODISCARD bool register_alternatives(int alt_count) override;
-  virtual long double estimate_trace_count() const override;
+  NODISCARD bool full_memory_conflict() override;
+  NODISCARD bool fence() override;
+  NODISCARD bool join(int tgt_proc) override;
+  NODISCARD bool mutex_lock(const SymAddrSize &ml) override;
+  NODISCARD bool mutex_lock_fail(const SymAddrSize &ml) override;
+  NODISCARD bool mutex_trylock(const SymAddrSize &ml) override;
+  NODISCARD bool mutex_unlock(const SymAddrSize &ml) override;
+  NODISCARD bool mutex_init(const SymAddrSize &ml) override;
+  NODISCARD bool mutex_destroy(const SymAddrSize &ml) override;
+  NODISCARD bool cond_init(const SymAddrSize &ml) override;
+  NODISCARD bool cond_signal(const SymAddrSize &ml) override;
+  NODISCARD bool cond_broadcast(const SymAddrSize &ml) override;
+  NODISCARD bool cond_wait(const SymAddrSize &cond_ml,
+                           const SymAddrSize &mutex_ml) override;
+  NODISCARD bool cond_awake(const SymAddrSize &cond_ml,
+                            const SymAddrSize &mutex_ml) override;
+  int cond_destroy(const SymAddrSize &ml) override;
+  NODISCARD bool register_alternatives(int alt_count) override;
+  long double estimate_trace_count() const override;
+
 protected:
   /* An identifier for a thread. An index into this->threads.
    *
@@ -109,12 +113,12 @@ protected:
     const void *ml;
     bool operator<(const Access &a) const{
       return type < a.type || (type == a.type && ml < a.ml);
-    };
+    }
     bool operator==(const Access &a) const{
       return type == a.type && (type == NA || ml == a.ml);
-    };
-    Access() : type(NA), ml(0) {};
-    Access(Type t, const void *m) : type(t), ml(m) {};
+    }
+    Access() : type(NA), ml(0) {}
+    Access(Type t, const void *m) : type(t), ml(m) {}
   };
 
   /* A store pending in a store buffer. */
@@ -122,7 +126,7 @@ protected:
   public:
     PendingStore(const SymAddrSize &ml, unsigned store_event,
                  const llvm::MDNode *md)
-      : ml(ml), store_event(store_event), last_rowe(-1), md(md) {};
+      : ml(ml), store_event(store_event), last_rowe(-1), md(md) {}
     /* The memory location that is being written to. */
     SymAddrSize ml;
     /* The index into prefix of the store event that produced this store
@@ -147,7 +151,7 @@ protected:
   public:
     Thread(const CPid &cpid, int spawn_event)
       : cpid(cpid), available(true), spawn_event(spawn_event), sleeping(false),
-        sleep_full_memory_conflict(false), sleep_sym(nullptr) {};
+        sleep_full_memory_conflict(false), sleep_sym(nullptr) {}
     CPid cpid;
     /* Is the thread available for scheduling? */
     bool available;
@@ -213,7 +217,7 @@ protected:
    */
   class ByteInfo{
   public:
-    ByteInfo() : last_update(-1), last_update_ml({SymMBlock::Global(0),0},1) {};
+    ByteInfo() : last_update(-1), last_update_ml({SymMBlock::Global(0),0},1) {}
     /* An index into prefix, to the latest update that accessed this
      * byte. last_update == -1 if there has been no update to this
      * byte.
@@ -247,17 +251,17 @@ protected:
      */
     struct last_read_t {
       std::vector<int> v;
-      int operator[](int i) const { return (i < int(v.size()) ? v[i] : -1); };
+      int operator[](int i) const { return (i < int(v.size()) ? v[i] : -1); }
       int &operator[](int i) {
         if(int(v.size()) <= i){
           v.resize(i+1,-1);
         }
         return v[i];
-      };
-      std::vector<int>::iterator begin() { return v.begin(); };
-      std::vector<int>::const_iterator begin() const { return v.begin(); };
-      std::vector<int>::iterator end() { return v.end(); };
-      std::vector<int>::const_iterator end() const { return v.end(); };
+      }
+      std::vector<int>::iterator begin() { return v.begin(); }
+      std::vector<int>::const_iterator begin() const { return v.begin(); }
+      std::vector<int>::iterator end() { return v.end(); }
+      std::vector<int>::const_iterator end() const { return v.end(); }
     } last_read;
   };
   std::map<SymAddr,ByteInfo> mem;
@@ -270,8 +274,8 @@ protected:
    */
   class Mutex{
   public:
-    Mutex() : last_access(-1), last_lock(-1), locked(false) {};
-    Mutex(int lacc) : last_access(lacc), last_lock(-1), locked(false) {};
+    Mutex() : last_access(-1), last_lock(-1), locked(false) {}
+    Mutex(int lacc) : last_access(lacc), last_lock(-1), locked(false) {}
     int last_access;
     int last_lock;
     bool locked;
@@ -285,8 +289,8 @@ protected:
   /* A CondVar represents a pthread_cond_t object. */
   class CondVar{
   public:
-    CondVar() : last_signal(-1) {};
-    CondVar(int init_idx) : last_signal(init_idx) {};
+    CondVar() : last_signal(-1) {}
+    CondVar(int init_idx) : last_signal(init_idx) {}
     /* Index in prefix of the latest call to either of
      * pthread_cond_init, pthread_cond_signal, or
      * pthread_cond_broadcast for this condition variable.
@@ -335,10 +339,10 @@ protected:
     int size;
     bool operator<(const Branch &b) const{
       return pid < b.pid || (pid == b.pid && alt < b.alt);
-    };
+    }
     bool operator==(const Branch &b) const{
       return pid == b.pid && alt == b.alt;
-    };
+    }
   };
 
   struct Race {
@@ -373,19 +377,19 @@ protected:
     };
     static Race Nonblock(int first, int second) {
       return Race(NONBLOCK, first, second, {-1,0}, -1);
-    };
+    }
     static Race Observed(int first, int second, int witness) {
       return Race(OBSERVED, first, second, {-1,0}, witness);
-    };
+    }
     static Race LockFail(int first, int second, IID<IPid> process) {
       return Race(LOCK_FAIL, first, second, process, -1);
-    };
+    }
     static Race LockSuc(int first, int second, int unlock) {
       return Race(LOCK_SUC, first, second, {-1,0}, unlock);
-    };
+    }
     static Race Nondet(int event, int alt) {
       return Race(NONDET, event, -1, {-1,0}, alt);
-    };
+    }
     static Race Sequence(int first, int second, IID<IPid> process, SymEv ev,
                          std::vector<unsigned> exclude) {
       return Race(SEQUENCE, first, second, process, std::move(ev),
@@ -394,6 +398,7 @@ protected:
     bool is_fail_kind() const {
       return kind == LOCK_FAIL || kind == SEQUENCE;
     }
+
   private:
     Race(Kind k, int f, int s, IID<IPid> p, int w) :
       kind(k), first_event(f), second_event(s), second_process(p),
@@ -428,7 +433,7 @@ protected:
   public:
     Event(const IID<IPid> &iid, sym_ty sym = {})
       : iid(iid), origin_iid(iid), md(0), clock(), may_conflict(false),
-        sym(std::move(sym)), sleep_branch_trace_count(0) {};
+        sym(std::move(sym)), sleep_branch_trace_count(0) {}
     /* The identifier for the first event in this event sequence. */
     IID<IPid> iid;
     /* The IID of the program instruction which is the origin of this
@@ -532,25 +537,25 @@ protected:
     assert(-1 <= aux && aux <= 0);
     assert(proc*2+1 < int(threads.size()));
     return aux ? proc*2 : proc*2+1;
-  };
+  }
 
   Event &curev() {
     assert(0 <= prefix_idx);
     assert(prefix_idx < int(prefix.len()));
     return prefix[prefix_idx];
-  };
+  }
 
   const Event &curev() const {
     assert(0 <= prefix_idx);
     assert(prefix_idx < int(prefix.len()));
     return prefix[prefix_idx];
-  };
+  }
 
   const Branch &curbranch() const {
     assert(0 <= prefix_idx);
     assert(prefix_idx < int(prefix.len()));
     return prefix.branch(prefix_idx);
-  };
+  }
 
   /* Symbolic events in Branches in the wakeup tree do not record the
    * data of memory accesses as these can change between executions.
@@ -559,7 +564,7 @@ protected:
    */
   Branch branch_with_symbolic_data(unsigned index) const {
     return Branch(prefix.branch(index), prefix[index].sym);
-  };
+  }
 
   IID<CPid> get_iid(unsigned i) const;
 

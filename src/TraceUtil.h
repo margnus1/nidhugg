@@ -28,6 +28,9 @@
 #ifndef __TRACE_UTIL_H__
 #define __TRACE_UTIL_H__
 
+#include <map>
+#include <string>
+
 #include "Trace.h"
 #if defined(HAVE_LLVM_IR_METADATA_H)
 #include <llvm/IR/Metadata.h>
@@ -57,7 +60,7 @@ namespace TraceUtil {
   std::string get_src_line_verbatim(const llvm::MDNode *m);
   std::string get_src_line_verbatim(const SrcLocVector::LocRef &loc);
   std::string basename(const std::string &fname);
-}
+}  // namespace TraceUtil
 
 class SrcLocVectorBuilder {
 public:

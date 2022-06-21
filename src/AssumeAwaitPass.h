@@ -22,8 +22,8 @@
 #ifndef __ASSUME_AWAIT_PASS_H__
 #define __ASSUME_AWAIT_PASS_H__
 
-#include <llvm/Pass.h>
 #include <llvm/Analysis/LoopPass.h>
+#include <llvm/Pass.h>
 
 /* The AssumeAwaitPass identifies calls to __VERIFIER_assume with simple
  * conditions and replaces them with
@@ -31,14 +31,14 @@
 class AssumeAwaitPass final : public llvm::FunctionPass{
 public:
   static char ID;
-  AssumeAwaitPass() : llvm::FunctionPass(ID) {};
+  AssumeAwaitPass() : llvm::FunctionPass(ID) {}
   bool doInitialization(llvm::Module &M) override;
   void getAnalysisUsage(llvm::AnalysisUsage &AU) const override;
   bool runOnFunction(llvm::Function &F) override;
 #ifdef LLVM_PASS_GETPASSNAME_IS_STRINGREF
-  llvm::StringRef getPassName() const override { return "AssumeAwaitPass"; } ;
+  llvm::StringRef getPassName() const override { return "AssumeAwaitPass"; }
 #else
-  const char *getPassName() const override { return "AssumeAwaitPass"; };
+  const char *getPassName() const override { return "AssumeAwaitPass"; }
 #endif
 private:
   static const unsigned no_sizes = 4;

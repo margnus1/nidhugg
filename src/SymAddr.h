@@ -22,12 +22,13 @@
 #ifndef __SYM_ADDR_H__
 #define __SYM_ADDR_H__
 
-#include <cstdint>
-#include <cassert>
 #include <algorithm>
-#include <string>
+#include <cassert>
+#include <cstdint>
 #include <functional>
 #include <memory>
+#include <string>
+#include <utility>
 
 struct SymMBlock {
   static SymMBlock Null() {
@@ -46,8 +47,8 @@ struct SymMBlock {
     return SymMBlock(pid, no);
   }
 
-  bool operator==(const SymMBlock &o) const { return pid == o.pid && alloc == o.alloc; };
-  bool operator!=(const SymMBlock &o) const { return !(*this == o); };
+  bool operator==(const SymMBlock &o) const { return pid == o.pid && alloc == o.alloc; }
+  bool operator!=(const SymMBlock &o) const { return !(*this == o); }
   bool operator<=(const SymMBlock &o) const {
     return pid < o.pid || (pid == o.pid && alloc <= o.alloc);
   }
@@ -61,8 +62,7 @@ struct SymMBlock {
   bool is_heap() const { return !is_global() && alloc >= 0; }
 
   unsigned get_no() const {
-    if (alloc < 0) return -1-alloc;
-    else return alloc;
+    return (alloc < 0 ? -1-alloc : alloc);
   }
 
   std::string to_string(std::function<std::string(int)> pid_str
@@ -91,8 +91,8 @@ public:
   SymMBlock block;
   uint32_t offset;
 
-  bool operator==(const SymAddr &o) const { return block == o.block && offset == o.offset; };
-  bool operator!=(const SymAddr &o) const { return !(*this == o); };
+  bool operator==(const SymAddr &o) const { return block == o.block && offset == o.offset; }
+  bool operator!=(const SymAddr &o) const { return !(*this == o); }
   bool operator<=(const SymAddr &o) const {
     return block < o.block || (block == o.block && offset <= o.offset);
   }
@@ -103,34 +103,34 @@ public:
     SymAddr copy = *this;
     ++offset;
     return copy;
-  };
+  }
   SymAddr &operator++() {
     ++offset;
     return *this;
-  };
+  }
   SymAddr operator--(int) {
     SymAddr copy = *this;
     --offset;
     return copy;
-  };
+  }
   SymAddr &operator--() {
     --offset;
     return *this;
-  };
+  }
   SymAddr operator+(intptr_t addend) const {
     SymAddr copy = *this;
     copy.offset += addend;
     return copy;
-  };
+  }
   SymAddr operator-(intptr_t addend) const {
     SymAddr copy = *this;
     copy.offset -= addend;
     return copy;
-  };
+  }
   intptr_t operator-(const SymAddr &other) const {
     assert(block == other.block);
     return offset - other.offset;
-  };
+  }
 
   std::string to_string(std::function<std::string(int)> pid_str
                         = (std::string(&)(int))std::to_string) const;
@@ -147,7 +147,7 @@ public:
       | std::size_t(a.offset) << 32;
   }
 };
-}
+}  // namespace std
 
 struct SymAddrSize {
 public:
@@ -168,8 +168,8 @@ public:
       && (addr.offset + size) > sa.offset;
   }
 
-  bool operator==(const SymAddrSize &o) const { return addr == o.addr && size == o.size; };
-  bool operator!=(const SymAddrSize &o) const { return !(*this == o); };
+  bool operator==(const SymAddrSize &o) const { return addr == o.addr && size == o.size; }
+  bool operator!=(const SymAddrSize &o) const { return !(*this == o); }
   bool operator<(const SymAddrSize &o) const {
     return addr < o.addr || (addr == o.addr && size < o.size);
   }
@@ -184,31 +184,31 @@ public:
     typedef SymAddr& reference;
     typedef SymAddr* pointer;
     typedef unsigned difference_type;
-    bool operator<(const iterator &it) const { return addr < it.addr; };
-    bool operator>(const iterator &it) const { return addr > it.addr; };
-    bool operator==(const iterator &it) const { return addr == it.addr; };
-    bool operator!=(const iterator &it) const { return addr != it.addr; };
-    bool operator<=(const iterator &it) const { return addr <= it.addr; };
-    bool operator>=(const iterator &it) const { return addr >= it.addr; };
+    bool operator<(const iterator &it) const { return addr < it.addr; }
+    bool operator>(const iterator &it) const { return addr > it.addr; }
+    bool operator==(const iterator &it) const { return addr == it.addr; }
+    bool operator!=(const iterator &it) const { return addr != it.addr; }
+    bool operator<=(const iterator &it) const { return addr <= it.addr; }
+    bool operator>=(const iterator &it) const { return addr >= it.addr; }
     iterator operator++(int) {
       iterator it = *this;
       ++addr;
       return it;
-    };
+    }
     iterator &operator++() {
       ++addr;
       return *this;
-    };
+    }
     iterator operator--(int) {
       iterator it = *this;
       --addr;
       return it;
-    };
+    }
     iterator &operator--() {
       --addr;
       return *this;
-    };
-    SymAddr operator*() const { return addr; };
+    }
+    SymAddr operator*() const { return addr; }
 
   private:
     iterator(SymAddr addr) : addr(addr) {}
@@ -216,8 +216,8 @@ public:
     SymAddr addr;
   };
 
-  iterator begin() const { return iterator(addr); };
-  iterator end() const { return iterator(addr + size); };
+  iterator begin() const { return iterator(addr); }
+  iterator end() const { return iterator(addr + size); }
 };
 
 /* An SymData object is an SymAddrSize ref together with a chunk of memory,
@@ -230,9 +230,11 @@ class SymData {
 public:
   typedef std::shared_ptr<uint8_t> block_type;
   static block_type alloc_block(int alloc_size);
+
 private:
   SymAddrSize ref;
   block_type block;
+
 public:
   /* Create an SymData with reference ref, and a fresh block of memory
    * of alloc_size bytes.
@@ -249,9 +251,9 @@ public:
     assert(ref.includes(addr));
     return block.get()[addr-ref.addr];
   }
-  const SymAddrSize &get_ref() const { return ref; };
-  void *get_block() const { return block.get(); };
-  block_type &get_shared_block() { return block; };
+  const SymAddrSize &get_ref() const { return ref; }
+  void *get_block() const { return block.get(); }
+  block_type &get_shared_block() { return block; }
 };
 
 #endif

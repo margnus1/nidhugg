@@ -21,8 +21,6 @@
 #ifndef __TIMING_H__
 #define __TIMING_H__
 
-#include <string>
-
 #ifdef NO_TIMING
 
 namespace Timing {
@@ -40,13 +38,16 @@ namespace Timing {
   };
 
   constexpr bool timing_enabled() { return false; }
-}
+}  // namespace Timing
 
 #else /* defined(NO_TIMING) */
-#include <chrono>
+
 #include <atomic>
+#include <chrono>
+#include <cstdint>
 #include <memory>
 #include <pthread.h>
+#include <string>
 
 namespace Timing {
   typedef std::chrono::steady_clock clock;
@@ -64,7 +65,7 @@ namespace Timing {
     };
 
     extern bool is_enabled;
-  }
+  }  // namespace impl
 
   class Context {
     Context(Context &) = delete;
@@ -77,7 +78,7 @@ namespace Timing {
     struct Thread {
       Thread();
       clock::duration inclusive, exclusive;
-      unsigned long count;
+      uint_fast64_t count;
       Thread *next;
     };
     std::atomic<Thread*> first_thread;
@@ -107,7 +108,7 @@ namespace Timing {
 
   void print_report();
   inline bool timing_enabled() { return impl::is_enabled; }
-}
+}  // namespace Timing
 
 #endif /* !defined(NO_TIMING) */
 

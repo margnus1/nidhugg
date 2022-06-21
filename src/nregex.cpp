@@ -17,11 +17,13 @@
  * <http://www.gnu.org/licenses/>.
  */
 
+#include "nregex.h"
+
+// C headers
+#include <regex.h>
+// C++ headers
 #include <sstream>
 #include <stdexcept>
-#include <regex.h>
-
-#include "nregex.h"
 
 namespace nregex{
 
@@ -93,4 +95,4 @@ namespace nregex{
     regfree(&preg);
     return result;
   }
-}
+}  // namespace nregex

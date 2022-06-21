@@ -28,6 +28,11 @@
 #include "DPORInterpreter.h"
 #include "GlobalContext.h"
 
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
 #if defined(HAVE_LLVM_IR_MODULE_H)
 #include <llvm/IR/Module.h>
 #elif defined(HAVE_LLVM_MODULE_H)
@@ -38,8 +43,6 @@
 #elif defined(HAVE_LLVM_LLVMCONTEXT_H)
 #include <llvm/LLVMContext.h>
 #endif
-
-#include <string>
 
 namespace llvm{
   class ExecutionEngine;
@@ -70,7 +73,7 @@ private:
    * constructors and operators for all fields.
    */
   struct ResultBase {
-    ResultBase() : error_trace(nullptr) {};
+    ResultBase() : error_trace(nullptr) {}
     ~ResultBase(){
       if(all_traces.empty()){ // Otherwise error_trace also appears in all_traces.
         delete error_trace;
@@ -78,7 +81,7 @@ private:
       for(Trace *t : all_traces){
         delete t;
       }
-    };
+    }
     ResultBase(const ResultBase&) = delete;
     ResultBase(ResultBase &&other)
       : error_trace(std::exchange(other.error_trace, nullptr)),
@@ -107,6 +110,7 @@ private:
      */
     std::vector<Trace*> all_traces;
   };
+
 public:
   /* A Result object describes the result of exploring the traces of
    * some module.
@@ -115,7 +119,7 @@ public:
   public:
     /* Empty result */
     Result() : trace_count(0), sleepset_blocked_trace_count(0),
-               assume_blocked_trace_count(0), await_blocked_trace_count(0) {};
+               assume_blocked_trace_count(0), await_blocked_trace_count(0) {}
     /* The number of explored (non-sleepset-blocked) traces */
     uint64_t trace_count;
     /* The number of explored sleepset-blocked traces */
@@ -125,12 +129,13 @@ public:
     /* The number of explored assume-blocked traces */
     uint64_t await_blocked_trace_count;
 
-    bool has_errors() const { return error_trace && error_trace->has_errors(); };
+    bool has_errors() const { return error_trace && error_trace->has_errors(); }
   };
 
   /* Explore the traces of the given module, and return the result.
    */
   Result run();
+
 private:
   /* Configuration */
   const Configuration &conf;
@@ -169,7 +174,7 @@ private:
    * where eash thread will explore the execution tree concurrently.
    */
   Result run_rfsc_parallel();
-  /* As rfsc explores asyncronosly with a threadpool,
+  /* As RFSC explores asynchronously with a threadpool,
    * an alternate function is given without overhead
    * if it should be run strictly sequential.
    */

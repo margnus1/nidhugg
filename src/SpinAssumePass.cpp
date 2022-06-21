@@ -19,6 +19,11 @@
 
 #include <config.h>
 
+#include "SpinAssumePass.h"
+
+#include "CheckModule.h"
+#include "vecset.h"
+
 #include <llvm/Pass.h>
 #include <llvm/Analysis/LoopPass.h>
 #if defined(HAVE_LLVM_IR_DOMINATORS_H)
@@ -53,9 +58,7 @@
 #endif
 #include <llvm/Transforms/Utils/BasicBlockUtils.h>
 
-#include "CheckModule.h"
-#include "SpinAssumePass.h"
-#include "vecset.h"
+#include <vector>
 
 #ifdef LLVM_HAS_ATTRIBUTELIST
 typedef llvm::AttributeList AttributeList;

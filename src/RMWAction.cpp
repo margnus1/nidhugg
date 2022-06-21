@@ -18,8 +18,10 @@
  */
 
 #include "RMWAction.h"
-#include <cstring>
+
 #include <climits>
+#include <cstring>
+
 /* One of these contains llvm::sys::IsBigEndianHost */
 #include <llvm/Support/Host.h>          /* On llvm < 11 */
 #include <llvm/Support/SwapByteOrder.h> /* On llvm >= 11 */
@@ -52,10 +54,10 @@ namespace {
     if (lsign != rsign) return lsign ? -1 : 1;
     return apcmp(lhs, rhs, count);
   }
-}
+}  // namespace
 
 const char *RmwAction::name(Kind kind) {
-  const static char *names[] = {
+  static const char *names[] = {
     nullptr, "XCHG", "ADD", "SUB", "AND", "NAND", "OR", "XOR", "MAX", "MIN",
     "UMAX", "UMIN",
   };
@@ -84,8 +86,8 @@ void RmwAction::apply_to(void *dst, std::size_t size, void *data) {
     int8_t carry = 0;
     for (size_t i = 0; i < size; ++i) {
       uint16_t sum;
-      if (kind == ADD) sum = inp[i*multiplier] + argp[i*multiplier] + carry;
-      else sum = inp[i*multiplier] - argp[i*multiplier] + carry;
+      sum = (kind == ADD) ? inp[i*multiplier] + argp[i*multiplier] + carry
+                          : inp[i*multiplier] - argp[i*multiplier] + carry;
       outp[i*multiplier] = sum;
       carry = sum >> 8;
     }

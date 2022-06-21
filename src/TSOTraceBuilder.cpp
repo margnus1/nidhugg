@@ -21,6 +21,9 @@
 #include "TSOTraceBuilder.h"
 #include "TraceUtil.h"
 
+#include <algorithm>
+#include <cstdint>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 
@@ -285,7 +288,7 @@ Trace *TSOTraceBuilder::get_trace() const{
   for(unsigned i = 0; i < prefix.len(); ++i){
     cmp.push_back(IID<CPid>(threads[prefix[i].iid.get_pid()].cpid,prefix[i].iid.get_index()));
     cmp_md.push_from(prefix[i].md);
-  };
+  }
   for(unsigned i = 0; i < errors.size(); ++i){
     errs.push_back(errors[i]->clone());
   }
@@ -2085,7 +2088,8 @@ void TSOTraceBuilder::recompute_observed(std::vector<Branch> &v) const {
       case SymEv::CMPXHGFAIL:
         if (read_all)
           last_reads.erase (VecSet<SymAddr>(e.addr().begin(), e.addr().end()));
-        else last_reads.insert(VecSet<SymAddr>(e.addr().begin(), e.addr().end()));
+        else
+          last_reads.insert(VecSet<SymAddr>(e.addr().begin(), e.addr().end()));
         break;
       case SymEv::STORE:
         assert(false); abort();
@@ -2096,7 +2100,8 @@ void TSOTraceBuilder::recompute_observed(std::vector<Branch> &v) const {
         }
         if (read_all)
           last_reads.insert(VecSet<SymAddr>(e.addr().begin(), e.addr().end()));
-        else last_reads.erase (VecSet<SymAddr>(e.addr().begin(), e.addr().end()));
+        else
+          last_reads.erase (VecSet<SymAddr>(e.addr().begin(), e.addr().end()));
         break;
       case SymEv::FULLMEM:
         last_reads.clear();
@@ -2180,7 +2185,7 @@ void TSOTraceBuilder::add_happens_after(unsigned second, unsigned first){
   assert(second != ~0u);
   assert(first != second);
   assert(first < second);
-  assert((long long)second <= prefix_idx);
+  assert((int_fast64_t)second <= prefix_idx);
 
   std::vector<unsigned> &vec = prefix[second].happens_after;
   if (vec.size() && vec.back() == first) return;
@@ -2189,7 +2194,7 @@ void TSOTraceBuilder::add_happens_after(unsigned second, unsigned first){
 }
 
 void TSOTraceBuilder::add_happens_after_thread(unsigned second, IPid thread){
-  assert((int)second == prefix_idx);
+  assert((int_fast64_t)second == prefix_idx);
   if (threads[thread].event_indices.empty()) return;
   add_happens_after(second, threads[thread].event_indices.back());
 }
@@ -2826,7 +2831,7 @@ wakeup_sequence(const Race &race) const{
     (std::vector<int>(threads.size(), std::numeric_limits<int>::max()));
 
   for (int k = i + 1; k < int(prefix.len()); ++k){
-    assert(exclude == exclude_end || long(*exclude) >= k);
+    assert(exclude == exclude_end || int_fast64_t(*exclude) >= k);
       const IID<IPid> &kiid = prefix[k].iid;
     if (exclude != exclude_end && *exclude == unsigned(k)) {
       /* XXX: We could just build the exclude clock in advance, and rely
@@ -3081,7 +3086,7 @@ bool TSOTraceBuilder::has_cycle(IID<IPid> *loc) const{
   /* Attempt to replay computation under SC */
   struct proc_t {
     proc_t()
-      : pc(0), pfx_index(0), store_index(0), blocked(false), block_clock() {};
+      : pc(0), pfx_index(0), store_index(0), blocked(false), block_clock() {}
     int pc; // Current program counter
     int pfx_index; // Index into prefix
     int store_index; // Index into stores

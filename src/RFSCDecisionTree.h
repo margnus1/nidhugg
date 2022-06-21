@@ -25,12 +25,16 @@
 #include "SaturatedGraph.h"
 #include "RFSCUnfoldingTree.h"
 
-#include <unordered_set>
-#include <mutex>
-#include <condition_variable>
-#include <queue>
 #include <atomic>
-
+#include <condition_variable>
+#include <deque>
+#include <map>
+#include <memory>
+#include <mutex>
+#include <queue>
+#include <unordered_set>
+#include <utility>
+#include <vector>
 
 struct DecisionNode;
 
@@ -117,7 +121,6 @@ public:
   bool is_pruned();
 
 private:
-
   std::shared_ptr<DecisionNode> parent;
 
   /* Defines if the subtree should be evaluated or not.
@@ -198,6 +201,7 @@ public:
 private:
   class alignas(64) ThreadWorkQueue {
     std::map<int,std::deque<std::shared_ptr<DecisionNode>>> queue;
+
   public:
     void push(std::shared_ptr<DecisionNode> ptr) {
       assert(ptr);
@@ -222,8 +226,7 @@ public:
     : scheduler(std::move(scheduler)) {
     // Initiallize the work_queue with a "root"-node
     this->scheduler->enqueue(std::make_shared<DecisionNode>());
-  };
-
+  }
 
   /* Backtracks a TraceBuilders DecisionNode up to an ancestor with not yet
    * evaluated sibling. */

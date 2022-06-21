@@ -19,8 +19,14 @@
 
 #include <config.h>
 
-#include <llvm/Pass.h>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <llvm/Config/llvm-config.h>
 #include <llvm/Analysis/LoopPass.h>
+#include <llvm/IR/InstIterator.h>
+#include <llvm/IR/Operator.h>
 #if defined(HAVE_LLVM_IR_DOMINATORS_H)
 #include <llvm/IR/Dominators.h>
 #elif defined(HAVE_LLVM_ANALYSIS_DOMINATORS_H)
@@ -46,12 +52,10 @@
 #elif defined(HAVE_LLVM_MODULE_H)
 #include <llvm/Module.h>
 #endif
-#include <llvm/Transforms/Utils/BasicBlockUtils.h>
-#include <llvm/IR/InstIterator.h>
-#include <llvm/IR/Operator.h>
-#include <llvm/Config/llvm-config.h>
-#include <llvm/Support/Debug.h>
+#include <llvm/Pass.h>
 #include <llvm/Support/CommandLine.h>
+#include <llvm/Support/Debug.h>
+#include <llvm/Transforms/Utils/BasicBlockUtils.h>
 
 // #include "CheckModule.h"
 #include "AssumeAwaitPass.h"
@@ -83,14 +87,15 @@ namespace {
 
   llvm::Value* getOrInsertFunction(llvm::Module &M, llvm::StringRef Name,
                                    llvm::FunctionType *T, AttributeList AttributeList) {
-    return M.getOrInsertFunction(std::move(Name),T,std::move(AttributeList))
+    auto ret = M.getOrInsertFunction(std::move(Name),T,std::move(AttributeList));
 #if LLVM_VERSION_MAJOR >= 9
       /* XXX: I will not work with some development versions of 9, I
        * should be replaced/complemented with a configure check.
        */
-      .getCallee()
+    return ret.getCallee();
+#else
+    return ret;
 #endif
-      ;
   }
 
   bool is_assume(llvm::CallInst *C) {
@@ -263,7 +268,7 @@ namespace {
     }
     return true;
   }
-}
+}  // namespace
 
 bool AssumeAwaitPass::doInitialization(llvm::Module &M){
   bool modified_M = false;
@@ -301,8 +306,7 @@ bool AssumeAwaitPass::runOnFunction(llvm::Function &F) {
     for (auto it = BB.begin(), end = BB.end(); it != end;) {
       if (tryRewriteAssume(&F, &BB, &*it)) {
         changed = true;
-        if (it->use_empty()) it = it->eraseFromParent();
-        else ++it;
+        it = (it->use_empty()) ? it->eraseFromParent() : std::next(it);
       } else {
         ++it;
       }

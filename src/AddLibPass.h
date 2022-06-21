@@ -22,6 +22,7 @@
 #ifndef __ADD_LIB_PASS_H__
 #define __ADD_LIB_PASS_H__
 
+#include <string>
 #include <vector>
 
 #include <llvm/Pass.h>
@@ -36,14 +37,15 @@
 class AddLibPass : public llvm::ModulePass{
 public:
   static char ID;
-  AddLibPass() : llvm::ModulePass(ID) {};
+  AddLibPass() : llvm::ModulePass(ID) {}
   virtual void getAnalysisUsage(llvm::AnalysisUsage &AU) const;
   virtual bool runOnModule(llvm::Module &M);
 #ifdef LLVM_PASS_GETPASSNAME_IS_STRINGREF
-  virtual llvm::StringRef getPassName() const { return "AddLibPass"; };
+  virtual llvm::StringRef getPassName() const { return "AddLibPass"; }
 #else
-  virtual const char *getPassName() const { return "AddLibPass"; };
+  virtual const char *getPassName() const { return "AddLibPass"; }
 #endif
+
 protected:
   /* If a function named name is already defined in M, then return
    * false. Otherwise search for a definition in the LLVM assembly

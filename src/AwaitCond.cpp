@@ -18,8 +18,10 @@
  */
 
 #include "AwaitCond.h"
-#include <cstring>
+
 #include <climits>
+#include <cstring>
+
 /* One of these contains llvm::sys::IsBigEndianHost */
 #include <llvm/Support/Host.h>          /* On llvm < 11 */
 #include <llvm/Support/SwapByteOrder.h> /* On llvm >= 11 */
@@ -52,7 +54,7 @@ namespace {
     if (lsign != rsign) return lsign ? -1 : 1;
     return apcmp(lhs, rhs, count);
   }
-}
+}  // namespace
 
 bool AwaitCond::satisfied_by(const void *data, std::size_t size) const {
   int cmp;
@@ -73,7 +75,7 @@ bool AwaitCond::satisfied_by(const void *data, std::size_t size) const {
 }
 
 const char *AwaitCond::name(Op op) {
-  const static char *names[] = {
+  static const char *names[] = {
     nullptr, "UGT",   "EQ",    "UGE",
     "ULT",   "NE",    "ULE",   nullptr,
     nullptr, "SGT",   nullptr, "SGE",

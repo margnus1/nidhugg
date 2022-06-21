@@ -22,11 +22,12 @@
 #ifndef __BVCLOCK_H__
 #define __BVCLOCK_H__
 
+#include <llvm/Support/raw_ostream.h>
+
 #include <ostream>
 #include <string>
+#include <utility>
 #include <vector>
-
-#include <llvm/Support/raw_ostream.h>
 
 class FBVClock;
 
@@ -36,11 +37,11 @@ class FBVClock;
 class BVClock{
 public:
   /* Create a vector clock where each clock is initialized to 0. */
-  BVClock(){};
-  BVClock(const BVClock &vc) : vec(vc.vec) {};
-  BVClock(BVClock &&vc) : vec(std::move(vc.vec)) {};
-  BVClock &operator=(const BVClock &vc) { vec = vc.vec; return *this; };
-  BVClock &operator=(BVClock &&vc) { vec = std::move(vc.vec); return *this; };
+  BVClock() {}
+  BVClock(const BVClock &vc) : vec(vc.vec) {}
+  BVClock(BVClock &&vc) : vec(std::move(vc.vec)) {}
+  BVClock &operator=(const BVClock &vc) { vec = vc.vec; return *this; }
+  BVClock &operator=(BVClock &&vc) { vec = std::move(vc.vec); return *this; }
   BVClock &operator=(FBVClock &vc);
   /* A vector clock v such that the clock of d in v takes the value
    * max((*this)[d],vc[d]) for all d.
@@ -55,7 +56,7 @@ public:
       vec[i] = vec[i] || vc.vec[i];
     }
     return *this;
-  };
+  }
   /* Assign this vector clock to (*this + vc). */
   BVClock &operator+=(BVClock &&vc);
   /* Assign this vector clock to (*this + vc). */
@@ -64,15 +65,15 @@ public:
   bool operator[](int d) const{
     if(d < int(vec.size())) return vec[d];
     return false;
-  };
+  }
   void set(int d) {
     if(d >= int(vec.size())){
       vec.resize(d+1,false);
     }
     vec[d] = true;
-  };
+  }
   /* Assign 0 to all clocks */
-  void clear() { vec.clear(); };
+  void clear() { vec.clear(); }
 
   /* *** Partial order comparisons ***
    *
@@ -94,6 +95,7 @@ public:
   bool operator>=(const BVClock &vc) const;
 
   std::string to_string() const;
+
 private:
   std::vector<bool> vec;
 };

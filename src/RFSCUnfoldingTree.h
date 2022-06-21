@@ -21,9 +21,12 @@
 #ifndef __RFSC_UNFOLDING_TREE_H__
 #define __RFSC_UNFOLDING_TREE_H__
 
-#include <unordered_set>
+#include <map>
+#include <memory>
 #include <mutex>
 #include <shared_mutex>
+#include <unordered_set>
+#include <utility>
 
 #include "TSOPSOTraceBuilder.h"
 #include "Seqno.h"
@@ -42,15 +45,16 @@
  */
 class RFSCUnfoldingTree final {
 public:
-  RFSCUnfoldingTree() {};
+  RFSCUnfoldingTree() {}
 
   struct UnfoldingNode;
   typedef std::shared_ptr<const UnfoldingNode> NodePtr;
+
  private:
   friend struct UnfoldingNode;
   typedef llvm::SmallVector<std::weak_ptr<const UnfoldingNode>,1> UnfoldingNodeChildren;
- public:
 
+ public:
   static SeqnoRoot unf_ctr_root;
   static thread_local Seqno unf_ctr;
 
@@ -62,7 +66,7 @@ public:
      * RFSCUnfoldingTree::find_unfolding_node() */
     UnfoldingNode(NodePtr parent, NodePtr read_from)
       : parent(std::move(parent)), read_from(std::move(read_from)),
-        seqno(++RFSCUnfoldingTree::unf_ctr) {};
+        seqno(++RFSCUnfoldingTree::unf_ctr) {}
   private:
     /* The children of this node. Used by get_or_create. */
     mutable UnfoldingNodeChildren children;
@@ -95,6 +99,5 @@ public:
 
   std::map<CPid,UnfoldingRoot> first_events;
   std::shared_timed_mutex unfolding_tree_mutex;
-
 };
 #endif

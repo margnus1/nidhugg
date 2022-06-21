@@ -24,8 +24,10 @@
 #include "SExpr.h"
 
 #include <llvm/Support/CommandLine.h>
+#include <cstddef>
 #include <boost/variant.hpp>
 #include <iomanip>
+#include <string>
 
 static llvm::cl::opt<bool>
 cl_bv("smtlib-bv",llvm::cl::NotHidden,
@@ -95,16 +97,20 @@ void SmtlibSatSolver::alloc_variables(unsigned count) {
 }
 
 void SmtlibSatSolver::add_edge(unsigned from, unsigned to) {
-  if (cl_bv) in << "(assert (bvult e" << from << " e" << to << "))\n";
-  else in << "(assert (< e" << from << " e" << to << "))\n";
+  if (cl_bv)
+    in << "(assert (bvult e" << from << " e" << to << "))\n";
+  else
+    in << "(assert (< e" << from << " e" << to << "))\n";
 }
 
 void SmtlibSatSolver::add_edge_disj(unsigned froma, unsigned toa,
                                     unsigned fromb, unsigned tob) {
-  if (cl_bv) in << "(assert (or (bvult e" << froma << " e" << toa << ")"
-               "(bvult e" << fromb << " e" << tob << ")))\n";
-  else in << "(assert (or (< e" << froma << " e" << toa << ")"
-         "(< e" << fromb << " e" << tob << ")))\n";
+  if (cl_bv)
+    in << "(assert (or (bvult e" << froma << " e" << toa << ")"
+                      "(bvult e" << fromb << " e" << tob << ")))\n";
+  else
+    in << "(assert (or (< e" << froma << " e" << toa << ")"
+                      "(< e" << fromb << " e" << tob << ")))\n";
 }
 
 bool SmtlibSatSolver::check_sat() {
@@ -143,12 +149,14 @@ std::vector<unsigned> SmtlibSatSolver::get_model() {
         const std::string &t = l2[1].token().name;
         assert(t.size() > 2 && t[0] == '#');
         int base;
-        if (t[1] == 'x') base = 16;
-        else if (t[1] == 'b') base = 2;
-        else abort();
+        switch (t[1]) {
+        case 'x': base = 16; break;
+        case 'b': base =  2; break;
+        default: abort();
+        }
         char *end;
         res[i] = std::strtol(t.c_str()+2, &end, base);
-        assert((end - t.c_str()) == long(t.size()));
+        assert((end - t.c_str()) == ptrdiff_t(t.size()));
       } else {
         assert(l2[1].kind() == SExpr::LIST);
         const auto &l3 = l2[1].list().elems;
@@ -157,7 +165,7 @@ std::vector<unsigned> SmtlibSatSolver::get_model() {
         assert(t.size() > 2 && t[0] == 'b' && t[1] == 'v');
         char *end;
         res[i] = std::strtol(t.c_str()+2, &end, 10);
-        assert((end - t.c_str()) == long(t.size()));
+        assert((end - t.c_str()) == ptrdiff_t(t.size()));
       }
     } else {
       assert(l2[1].kind() == SExpr::INT);

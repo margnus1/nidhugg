@@ -26,9 +26,10 @@
 #include "SatSolver.h"
 #include "Option.h"
 
+#include <memory>
 #include <set>
 #include <string>
-#include <memory>
+#include <vector>
 
 /* A Configuration object keeps track of all configuration options
  * that should be used during a program analysis. The configuration
@@ -105,7 +106,7 @@ public:
     sat_solver = SMTLIB;
 #endif
     argv.push_back(get_default_program_name());
-  };
+  }
   /* Read the switches given to the program by the user. Assign
    * configuration options accordingly.
    */

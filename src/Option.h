@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <cassert>
 #include <type_traits>
+#include <utility>
 
 template<typename Value>
 class Option {
@@ -55,8 +56,7 @@ public:
   Value *operator ->() { assert(has_value); return &value; }
 
   Value const &value_or(const Value &def) const {
-    if (has_value) return value;
-    else return def;
+    return has_value ? value : def;
   }
 
   /* Monadic bind; transform the value of the option (if any) */

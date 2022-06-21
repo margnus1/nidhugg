@@ -20,8 +20,8 @@
 #include <config.h>
 
 #include <llvm/ADT/SmallPtrSet.h>
-#include <llvm/IR/BasicBlock.h>
 #include <llvm/Analysis/ValueTracking.h>
+#include <llvm/IR/BasicBlock.h>
 
 #include "DeadCodeElimPass.h"
 
@@ -57,7 +57,7 @@ namespace {
     } while(use.size() != old_size);
     return use;
   }
-}
+}  // namespace
 
 bool DeadCodeElimPass::runOnFunction(llvm::Function &F) {
   size_t deleted = 0;

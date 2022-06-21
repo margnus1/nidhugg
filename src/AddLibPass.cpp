@@ -21,6 +21,9 @@
 #include "Debug.h"
 #include "StrModule.h"
 
+#include <memory>
+#include <stdexcept>
+
 #if defined(HAVE_LLVM_IR_CONSTANTS_H)
 #include <llvm/IR/Constants.h>
 #elif defined(HAVE_LLVM_CONSTANTS_H)
@@ -38,8 +41,6 @@
 #elif defined(HAVE_LLVM_LINKER_LINKER_H)
 #include <llvm/Linker/Linker.h>
 #endif
-
-#include <stdexcept>
 
 void AddLibPass::getAnalysisUsage(llvm::AnalysisUsage &AU) const{
 }
@@ -174,10 +175,10 @@ bool AddLibPass::runOnModule(llvm::Module &M){
         }
         malloc_argtys << *F_malloc->arg_begin()->getType();
         malloc_argtys.flush();
-        malloc_declaration="declare i8* @malloc("+malloc_argty+")\n";
+        malloc_declaration = "declare i8* @malloc("+malloc_argty+")\n";
       }else{
-        malloc_declaration="declare i8* @malloc(i64)\n";
-        malloc_argty="i64";
+        malloc_declaration = "declare i8* @malloc(i64)\n";
+        malloc_argty = "i64";
       }
       if(!(arg0ty == "i32" || arg0ty == "i64") ||
          !(arg1ty == "i32" || arg1ty == "i64")){

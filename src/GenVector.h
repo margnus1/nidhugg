@@ -27,10 +27,12 @@
 #endif
 #include <algorithm>
 #include <array>
+#include <climits>
+#include <cstdint>
 #include <functional>
 #include <memory>
-#include <cstdint>
-#include <climits>
+#include <utility>
+#include <vector>
 
 namespace gen {
 
@@ -92,7 +94,7 @@ namespace gen {
         std::make_unique<_debug_refcount_type>(0);
     void assert_writable() const;
 #else
-    inline constexpr void assert_writable() const {};
+    inline constexpr void assert_writable() const {}
 #endif
     typedef T limb_type[limb_size];
     static_assert(sizeof(T) * limb_size == sizeof(limb_type), "Packing assumption");
@@ -137,8 +139,8 @@ namespace gen {
     class const_iterator {
       const limb_type *const *start;
       size_type index;
-      const_iterator(const limb_type *const *start, size_type index)
-        : start(start), index(index) {}
+      const_iterator(const limb_type *const *start_init, size_type index)
+        : start(start_init), index(index) {}
       friend class vector;
     public:
       typedef const T value_type, *pointer, &reference;
@@ -160,7 +162,7 @@ namespace gen {
   template<typename T, std::size_t limb_size, typename Fn>
   bool all_of(const vector<T,limb_size> &v, Fn&& f);
 
-}
+}  // namespace gen
 
 /* Start implementation */
 
@@ -357,7 +359,7 @@ namespace gen {
     if (limb_ix != 0) uncow_if_needed(limb);
     else grow();
     ++_size;
-    return (*start[limb]) + limb_ix ;
+    return (*start[limb]) + limb_ix;
   }
   template<typename T, std::size_t limb_size>
   void vector<T,limb_size>::push_back(const T &val) {

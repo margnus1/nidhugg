@@ -24,6 +24,8 @@
 
 #include "TraceBuilder.h"
 
+#include <vector>
+
 /* A DetCheckTraceBuilder is an abstract TraceBuilder which adds some
  * functionality for detecting and reporting thread-wise
  * nondeterminism in the target program during computation replays.
@@ -31,7 +33,7 @@
 class DetCheckTraceBuilder : public TraceBuilder {
 public:
   DetCheckTraceBuilder(const Configuration &conf = Configuration::default_conf);
-  virtual ~DetCheckTraceBuilder(){};
+  virtual ~DetCheckTraceBuilder() {}
   /* Execute a conditional branch instruction, branching on the value
    * cnd.
    *
@@ -43,6 +45,7 @@ public:
    * previous computation.
    */
   virtual bool is_replaying() const = 0;
+
 protected:
   /* Call before starting a new computation to restart the branch
    * logging.

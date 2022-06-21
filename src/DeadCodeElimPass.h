@@ -22,8 +22,8 @@
 #ifndef __DEAD_CODE_ELIM_PASS_H__
 #define __DEAD_CODE_ELIM_PASS_H__
 
-#include <llvm/Pass.h>
 #include <llvm/Analysis/LoopPass.h>
+#include <llvm/Pass.h>
 
 /* The DeadCodeElim pass is a conservative dead-code eliminator, which
  * preserves behaviour visible to stateless model checking, such as
@@ -32,13 +32,13 @@
 class DeadCodeElimPass final : public llvm::FunctionPass{
 public:
   static char ID;
-  DeadCodeElimPass() : llvm::FunctionPass(ID) {};
+  DeadCodeElimPass() : llvm::FunctionPass(ID) {}
   void getAnalysisUsage(llvm::AnalysisUsage &AU) const override;
   bool runOnFunction(llvm::Function &F) override;
 #ifdef LLVM_PASS_GETPASSNAME_IS_STRINGREF
-  llvm::StringRef getPassName() const override { return "DeadCodeElimPass"; } ;
+  llvm::StringRef getPassName() const override { return "DeadCodeElimPass"; }
 #else
-  const char *getPassName() const override { return "DeadCodeElimPass"; };
+  const char *getPassName() const override { return "DeadCodeElimPass"; }
 #endif
 private:
 };

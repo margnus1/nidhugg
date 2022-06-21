@@ -19,25 +19,32 @@
 
 #include <config.h>
 
-#include "CheckModule.h"
 #include "PartialLoopPurityPass.h"
-#include "SpinAssumePass.h"
-#include "Debug.h"
-#include "vecset.h"
-#include "Option.h"
 
-#include <llvm/Pass.h>
+#include "CheckModule.h"
+#include "Debug.h"
+#include "Option.h"
+#include "SpinAssumePass.h"
+#include "vecset.h"
+
+#include <boost/container/flat_map.hpp>
+#include <llvm/Analysis/CallGraph.h>
 #include <llvm/Analysis/LoopPass.h>
+#include <llvm/Analysis/ValueTracking.h>
 #if defined(HAVE_LLVM_IR_DOMINATORS_H)
 #include <llvm/IR/Dominators.h>
 #elif defined(HAVE_LLVM_ANALYSIS_DOMINATORS_H)
 #include <llvm/Analysis/Dominators.h>
 #endif
+#include <llvm/Config/llvm-config.h>
 #if defined(HAVE_LLVM_IR_FUNCTION_H)
 #include <llvm/IR/Function.h>
 #elif defined(HAVE_LLVM_FUNCTION_H)
 #include <llvm/Function.h>
 #endif
+#include <llvm/IR/Constants.h>
+#include <llvm/IR/InlineAsm.h>
+#include <llvm/IR/Verifier.h>
 #if defined(HAVE_LLVM_IR_INSTRUCTIONS_H)
 #include <llvm/IR/Instructions.h>
 #elif defined(HAVE_LLVM_INSTRUCTIONS_H)
@@ -58,20 +65,21 @@
 #elif defined(HAVE_LLVM_IR_CALLSITE_H)
 #include <llvm/IR/CallSite.h>
 #endif
-#include <llvm/Transforms/Utils/BasicBlockUtils.h>
-#include <llvm/Transforms/Utils/Cloning.h>
-#include <llvm/Analysis/ValueTracking.h>
-#include <llvm/Analysis/CallGraph.h>
-#include <llvm/IR/Verifier.h>
-#include <llvm/IR/Constants.h>
-#include <llvm/IR/InlineAsm.h>
+#include <llvm/Pass.h>
 #include <llvm/Support/Debug.h>
 #include <llvm/Support/FormattedStream.h>
-#include <llvm/Config/llvm-config.h>
+#include <llvm/Transforms/Utils/BasicBlockUtils.h>
+#include <llvm/Transforms/Utils/Cloning.h>
 
+#include <algorithm>
+#include <map>
+#include <set>
+#include <sstream>
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
-#include <sstream>
+#include <utility>
+#include <vector>
 
 #ifdef LLVM_HAS_TERMINATORINST
 typedef llvm::TerminatorInst TerminatorInst;
@@ -247,8 +255,8 @@ namespace {
             const llvm::APInt &OR = llvm::cast<llvm::ConstantInt>(o.rhs)->getValue();
             if (check_predicate_satisfaction(OR, res.op, RR)) {
               underapprox = true;
-              return false; /* Possible to refine: we'd have to
-                             * exclude OR from res somehow */
+              return false; // Possible to refine: we'd have to
+                            // exclude OR from res somehow
             } else {
               return res;
             }
@@ -260,8 +268,7 @@ namespace {
             if (CmpInst::isIntPredicate(res.op)
                 && (o.op == res.op || o.op == icmpop_invert_strictness(res.op))) {
               underapprox = true; /* Maybe not always? */
-              if ((check_predicate_satisfaction(RR, res.op, OR))) return o;
-              else return res;
+              return ((check_predicate_satisfaction(RR, res.op, OR))) ? o : res;
             }
           }
         }
@@ -485,10 +492,11 @@ namespace {
       for (BinaryPredicate &term : vec)
         res.addConjunct(std::move(term));
       return res;
-    };
+    }
 
     /* Earliest location that can support an insertion. */
     InsertionPoint insertion_point;
+
   private:
     struct LexicalCompare {
       auto tupleit(const BinaryPredicate &p) const {
@@ -496,7 +504,7 @@ namespace {
       }
       bool operator()(const BinaryPredicate &a, const BinaryPredicate &b) const {
         return tupleit(a) < tupleit(b);
-      };
+      }
     };
 
     // &=, if you will
@@ -508,8 +516,9 @@ namespace {
         BinaryPredicate m = c.meet(cond, underapprox);
         if (m == c) return;
         if (m == cond) continue;
-        if (underapprox) newset.push_back(c); /* Have to keep both */
-        else {
+        if (underapprox) {
+          newset.push_back(c); /* Have to keep both */
+        } else {
           // Start the loop over!
 #ifndef NDEBUG
           /* We're going to meet c with m again, so ensure that meet
@@ -523,11 +532,11 @@ namespace {
       }
       conjuncts = std::move(newset);
       conjuncts.insert(cond);
-    };
+    }
     void addConjuncts(const VecSet<BinaryPredicate, LexicalCompare> &conds) {
       for(const BinaryPredicate &cond : conds)
         addConjunct(cond); /* Can be more efficient */
-    };
+    }
 
     VecSet<BinaryPredicate, LexicalCompare> conjuncts;
 
@@ -618,7 +627,7 @@ namespace {
       for (Elem &term : vec)
         res.addCond(std::move(term));
       return res;
-    };
+    }
 
   private:
     using Elem = ConjunctionLoc;
@@ -647,9 +656,8 @@ namespace {
       }
       bool operator()(const Elem &a, const Elem &b) const {
         return tupleit(a) < tupleit(b);
-      };
+      }
     };
-
 
     void addCond(const Elem &cond) {
       if (cond.is_false()) return; /* Keep it normalised */
@@ -660,11 +668,11 @@ namespace {
       }
       disjuncts = std::move(newset);
       disjuncts.insert(cond);
-    };
+    }
     void addConds(const VecSet<Elem, LexicalCompare> &conds) {
       for(const Elem &cond : conds)
         addCond(cond); /* Can be more efficient */
-    };
+    }
 
     static bool erase_greater(VecSet<Elem, LexicalCompare> &set,
                              const Elem &c) {
@@ -673,7 +681,9 @@ namespace {
         if (c < set[i]) {
           set.erase_at(i);
           erased = true;
-        } else ++i;
+        } else {
+          ++i;
+        }
       }
       return erased;
     }
@@ -744,9 +754,11 @@ namespace {
   }
 
   llvm::raw_ostream &operator<<(llvm::raw_ostream &os, const BinaryPredicate &pred) {
-    if (pred.is_true()) os << "true";
-    else if (pred.is_false()) os << "false";
-    else {
+    if (pred.is_true()) {
+      os << "true";
+    } else if (pred.is_false()) {
+      os << "false";
+    } else {
       pred.lhs->printAsOperand(os);
       os << " " << getPredicateName(pred.op) << " ";
       pred.rhs->printAsOperand(os);
@@ -760,8 +772,9 @@ namespace {
     return os;
   }
   llvm::raw_ostream &operator<<(llvm::raw_ostream &os, const ConjunctionLoc &cond) {
-    if (!cond.has_conjuncts()) os << "true";
-    else {
+    if (!cond.has_conjuncts()) {
+      os << "true";
+    } else {
       for (auto it = cond.begin(); it != cond.end(); ++it) {
         if (it != cond.begin()) os << " && ";
         os << *it;
@@ -770,8 +783,9 @@ namespace {
     return os << cond.insertion_point;
   }
   llvm::raw_ostream &operator<<(llvm::raw_ostream &os, const PurityCondition &cond) {
-    if (cond.is_false()) os << "false";
-    else {
+    if (cond.is_false()) {
+      os << "false";
+    } else {
       for (auto it = cond.begin(); it != cond.end(); ++it) {
         if (it != cond.begin()) os << " || ";
         os << *it;
@@ -1448,11 +1462,10 @@ namespace {
              llvm::CmpInst::getInversePredicate(term.op),
              LHS, RHS, "pp.term.negated", I);
           if (!Cond) Cond = TermCond;
-          else {
+          else
             Cond = llvm::BinaryOperator::Create
               (llvm::BinaryOperator::BinaryOps::Or, Cond, TermCond,
                "pp.conj.negated", I);
-          }
         }
       }
       llvm::Function *F_assume = L->getHeader()->getParent()->getParent()
@@ -1472,7 +1485,7 @@ namespace {
 
     return true;
   }
-}
+}  // namespace
 
 void PartialLoopPurityPass::getAnalysisUsage(llvm::AnalysisUsage &AU) const{
   AU.addRequired<DeclareAssumePass>();

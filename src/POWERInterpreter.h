@@ -44,6 +44,12 @@
 #include "DPORInterpreter.h"
 #include "AnyCallInst.h"
 
+#include <map>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
 #include <llvm/ExecutionEngine/ExecutionEngine.h>
 #include <llvm/ExecutionEngine/GenericValue.h>
 #if defined(HAVE_LLVM_IR_DATALAYOUT_H)
@@ -113,17 +119,17 @@ public:
     FetchedInstruction(llvm::Instruction &I)
       : I(I),
         Committed(false), EventIndex(0),
-        IsBranch(false) {};
+        IsBranch(false) {}
     llvm::Instruction &I;
     struct Operand{
-      Operand() : Available(false), IsAddrOf(-1), IsDataOf(-1) {};
-      Operand(const llvm::GenericValue &Value) : Value(Value), Available(true), IsAddrOf(-1), IsDataOf(-1) {};
+      Operand() : Available(false), IsAddrOf(-1), IsDataOf(-1) {}
+      Operand(const llvm::GenericValue &Value) : Value(Value), Available(true), IsAddrOf(-1), IsDataOf(-1) {}
       llvm::GenericValue Value;
       bool Available;
       int IsAddrOf; // This operand holds the address for the IsAddrOf:th access of this instruction. -1 if not an address.
       int IsDataOf; // This operand holds the data for the IsDataOf:th access of this instruction. -1 if not data for an access.
-      bool isAddr() const { return 0 <= IsAddrOf; };
-      bool isData() const { return 0 <= IsDataOf; };
+      bool isAddr() const { return 0 <= IsAddrOf; }
+      bool isData() const { return 0 <= IsDataOf; }
     };
     std::vector<Operand> Operands;
     struct Dependent{
@@ -135,10 +141,10 @@ public:
       int op_idx;
       bool operator<(const Dependent &D) const {
         return FI < D.FI || (FI == D.FI && op_idx < D.op_idx);
-      };
+      }
       bool operator==(const Dependent &D) const{
         return FI == D.FI && op_idx == D.op_idx;
-      };
+      }
     };
     VecSet<Dependent> Dependents; // The instructions which depend on this instruction
     VecSet<int> AddrDeps;
@@ -147,13 +153,13 @@ public:
     bool Committed;
     int EventIndex; // 0 if not an event
     bool IsBranch; // This instruction should be interpreted as branching
-    bool isEvent() const { return EventIndex; };
+    bool isEvent() const { return EventIndex; }
     bool committable() const {
       for(unsigned i = 0; i < Operands.size(); ++i){
         if(!Operands[i].Available) return false;
       }
       return true;
-    };
+    }
   };
 
   // ExecutionContext struct - This struct represents one stack frame currently
@@ -186,6 +192,7 @@ public:
       return *this;
     }
   };
+
 private:
   llvm::GenericValue ExitValue;          // The return value of the called function
   llvm::DataLayout TD;
@@ -199,13 +206,13 @@ private:
     Thread(const CPid &cpid)
       : cpid(cpid), status(new uint8_t()) {
       *status = 0;
-    };
+    }
     Thread(Thread &&T) noexcept
       : cpid(T.cpid), ECStack(std::move(T.ECStack)),
         CommittableEvents(T.CommittableEvents),
         CreateEvent(T.CreateEvent),
         Allocas(std::move(T.Allocas)),
-        status(T.status) {};
+        status(T.status) {}
     CPid cpid;
     // The runtime stack of executing code.  The top of the stack is the current
     // function record.
@@ -383,7 +390,7 @@ private:  // Helper functions
     assert(0 <= n && n < int(CurInstr->Operands.size()));
     assert(CurInstr->Operands[n].Available);
     return CurInstr->Operands[n].Value;
-  };
+  }
   llvm::GenericValue getConstantOperandValue(llvm::Value *V);
   llvm::GenericValue getConstantValue(llvm::Constant *V);
   llvm::GenericValue executeTruncInst(llvm::Value *SrcVal, const llvm::GenericValue &Src,
@@ -443,14 +450,14 @@ private:  // Helper functions
 #else
     return {Ptr,int(getDataLayout().getTypeStoreSize(Ty))};
 #endif
-  };
+  }
   ConstMRef GetConstMRef(void const *Ptr, llvm::Type *Ty){
 #ifdef LLVM_EXECUTIONENGINE_DATALAYOUT_PTR
     return {Ptr,int(getDataLayout()->getTypeStoreSize(Ty))};
 #else
     return {Ptr,int(getDataLayout().getTypeStoreSize(Ty))};
 #endif
-  };
+  }
   /* Get an MBlock associated with the location Ptr, and holding the
    * value Val of type Ty. The size of the memory location will be
    * that of Ty.
@@ -464,13 +471,13 @@ private:  // Helper functions
     MBlock B(GetMRef(Ptr,Ty),alloc_size);
     StoreValueToMemory(Val,static_cast<llvm::GenericValue*>(B.get_block()),Ty);
     return B;
-  };
+  }
 
   void commit();
   void commit(const std::shared_ptr<FetchedInstruction> &FI){
     CurInstr = FI;
     commit();
-  };
+  }
   void fetchAll();
   std::shared_ptr<FetchedInstruction> fetch(llvm::Instruction &I);
   /* When a thread terminates, it needs to execute a few extra

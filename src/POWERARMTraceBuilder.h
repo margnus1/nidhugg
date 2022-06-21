@@ -23,6 +23,8 @@
 #define __POWER_TRACE_BUILDER_H__
 
 #include <stdexcept>
+#include <string>
+#include <vector>
 
 #include "BVClock.h"
 #include "FBVClock.h"
@@ -51,8 +53,8 @@
 class POWERARMTraceBuilder : public TraceBuilder {
 public:
   POWERARMTraceBuilder(const Configuration &conf = Configuration::default_conf)
-    : TraceBuilder(conf) {};
-  virtual ~POWERARMTraceBuilder(){};
+    : TraceBuilder(conf) {}
+  virtual ~POWERARMTraceBuilder() {}
 
   /* Access identification:
    *
@@ -157,7 +159,7 @@ public:
 
   virtual bool check_for_cycles(){
     throw std::logic_error("POWERARMTraceBuilder::check_for_cycles: Not supported.");
-  };
+  }
   /* Call to spawn a new thread. proc should be the parent thread. The
    * identifier of the new thread is returned.
    */
@@ -202,7 +204,7 @@ namespace PATB_impl{
   };
 
   template<MemoryModel MemMod, CB_T CB, class Event> class TB;
-}
+}  // namespace PATB_impl
 
 typedef PATB_impl::TB<PATB_impl::ARM,PATB_impl::CB_ARM,PATB_impl::ARMEvent> ARMTraceBuilder;
 typedef PATB_impl::TB<PATB_impl::POWER,PATB_impl::CB_POWER,PATB_impl::POWEREvent> POWERTraceBuilder;

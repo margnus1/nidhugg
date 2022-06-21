@@ -19,6 +19,7 @@
 
 #include "SExpr.h"
 
+#include <cstdint>
 
 
 typedef std::logic_error parse_error;
@@ -44,11 +45,11 @@ std::istream &operator>>(std::istream &is, SExpr &sexp) {
         sexp = SExpr(std::move(elems));
     } else {
         std::string str;
-        for(;!endoftok(c); c = is.get()) str.push_back(c);
+        for( ; !endoftok(c); c = is.get()) str.push_back(c);
         is.putback(c);
         char *end;
         int num = std::strtol(str.c_str(), &end, 10);
-        if ((end - str.c_str()) != long(str.size())) {
+        if ((end - str.c_str()) != int_fast64_t(str.size())) {
             sexp = SExpr(str);
         } else {
             sexp = SExpr(num);

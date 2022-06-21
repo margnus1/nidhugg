@@ -21,6 +21,7 @@
 #include "PSOTraceBuilder.h"
 #include "TraceUtil.h"
 
+#include <algorithm>
 #include <sstream>
 #include <stdexcept>
 
@@ -50,8 +51,8 @@ bool PSOTraceBuilder::schedule(int *proc, int *aux, int *alt, bool *dryrun){
       /* Continue executing the current Event */
       IPid pid = curnode().iid.get_pid();
       *proc = threads[pid].proc;
-      if(threads[pid].cpid.is_auxiliary()) *aux = threads[pid].cpid.get_aux_index();
-      else *aux = -1;
+      bool is_aux = threads[pid].cpid.is_auxiliary();
+      *aux = is_aux ? threads[pid].cpid.get_aux_index() : -1;
       *alt = 0;
       assert(threads[pid].available);
       ++threads[pid].clock[pid];
@@ -68,8 +69,8 @@ bool PSOTraceBuilder::schedule(int *proc, int *aux, int *alt, bool *dryrun){
       threads[pid].sleeping = true;
       sleepers.insert(pid);
       *proc = threads[pid].proc;
-      if(threads[pid].cpid.is_auxiliary()) *aux = threads[pid].cpid.get_aux_index();
-      else *aux = -1;
+      bool is_aux = threads[pid].cpid.is_auxiliary();
+      *aux = is_aux ? threads[pid].cpid.get_aux_index() : -1;
       *alt = 0;
       *dryrun = true;
       this->dryrun = true;
@@ -80,8 +81,8 @@ bool PSOTraceBuilder::schedule(int *proc, int *aux, int *alt, bool *dryrun){
       ++prefix_idx;
       IPid pid = curnode().iid.get_pid();
       *proc = threads[pid].proc;
-      if(threads[pid].cpid.is_auxiliary()) *aux = threads[pid].cpid.get_aux_index();
-      else *aux = -1;
+      bool is_aux = threads[pid].cpid.is_auxiliary();
+      *aux = is_aux ? threads[pid].cpid.get_aux_index() : -1;
       *alt = curnode().alt;
       assert(threads[pid].available);
       ++threads[pid].clock[pid];
@@ -1036,6 +1037,7 @@ void PSOTraceBuilder::add_branch(int i, int j){
   const VClock<IPid> &iclock = prefix[i].clock;
   for(int k = i+1; k <= j; ++k){
     IPid p = prefix[k].iid.get_pid();
+    assert(p >= 0);
     /* Did we already cover p? */
     if(p < int(candidates.size()) && 0 <= candidates[p]) continue;
     const VClock<IPid> &pclock = prefix[k].clock;
@@ -1145,7 +1147,7 @@ bool PSOTraceBuilder::has_cycle(IID<IPid> *loc) const{
     int update;
     bool operator<(const stupd_t &su) const{
       return store < su.store;
-    };
+    }
   };
   /* stores[proc] is all store events of thread proc, ordered by
    * store index.
@@ -1166,7 +1168,7 @@ bool PSOTraceBuilder::has_cycle(IID<IPid> *loc) const{
   /* Attempt to replay computation under SC */
   struct thread_t {
     thread_t()
-      : pc(0), pfx_index(0), store_index(0), blocked(false), block_clock() {};
+      : pc(0), pfx_index(0), store_index(0), blocked(false), block_clock() {}
     int pc; // Current program counter
     int pfx_index; // Index into prefix
     int store_index; // Index into stores

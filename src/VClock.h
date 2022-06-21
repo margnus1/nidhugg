@@ -24,12 +24,13 @@
 
 #include "IID.h"
 
+#include <llvm/Support/raw_ostream.h>
+
 #include <map>
 #include <ostream>
 #include <string>
+#include <utility>
 #include <vector>
-
-#include <llvm/Support/raw_ostream.h>
 
 /* A VClock<DOM> is a vector clock - a function from some domain DOM
  * to natural numbers.
@@ -71,7 +72,7 @@ public:
 
   bool includes(const IID<DOM> &iid) const {
     return iid.get_index() <= (*this)[iid.get_pid()];
-  };
+  }
 
   /* *** Partial order comparisons ***
    *
@@ -93,6 +94,7 @@ public:
   bool operator>=(const VClock<DOM> &vc) const;
 
   std::string to_string() const;
+
 private:
   std::map<DOM,int> clocks;
 };
@@ -156,7 +158,7 @@ public:
 
   bool includes(const IID<int> &iid) const {
     return iid.get_index() <= (*this)[iid.get_pid()];
-  };
+  }
 
   /* *** Partial order comparisons ***
    *
@@ -182,6 +184,7 @@ public:
   bool operator>=(const VClock<int> &vc) const;
 
   std::string to_string() const;
+
 private:
   std::vector<int> vec;
 };
@@ -201,8 +204,8 @@ public:
     /* Assign this vector clock to (*this - vc). */
     Ref &operator-=(const Ref vc);
     unsigned size() const { return _size; }
-    int operator[](int d) const { assert(d >= 0 && unsigned(d) < _size); return base[d]; };
-    int &operator[](int d) { assert(d >= 0 && unsigned(d) < _size); return base[d]; };
+    int operator[](int d) const { assert(d >= 0 && unsigned(d) < _size); return base[d]; }
+    int &operator[](int d) { assert(d >= 0 && unsigned(d) < _size); return base[d]; }
 
     /* *** Partial order comparisons ***
      *
@@ -217,6 +220,7 @@ public:
     return { vec.data() + (d*clock_size), clock_size };
   }
   void assign(unsigned clock_size, std::size_t count, const VClock<int> &init);
+
 private:
   std::vector<int> vec;
   unsigned clock_size;

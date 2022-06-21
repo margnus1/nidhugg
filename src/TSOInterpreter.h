@@ -24,6 +24,11 @@
 #include "Interpreter.h"
 #include "TSOTraceBuilder.h"
 
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
 /* A TSOInterpreter is an interpreter running under the TSO
  * semantics. The execution should be guided by scheduling from a
  * TSOTraceBuilder.
@@ -45,6 +50,7 @@ public:
   virtual void visitAtomicCmpXchgInst(llvm::AtomicCmpXchgInst &I);
   virtual void visitAtomicRMWInst(llvm::AtomicRMWInst &I);
   virtual void visitInlineAsm(llvm::CallInst &CI, const std::string &asmstr);
+
 protected:
   virtual void runAux(int proc, int aux);
   virtual int newThread(const CPid &cpid);
@@ -57,7 +63,7 @@ protected:
    */
   class TSOThread{
   public:
-    TSOThread() : partial_buffer_flush(-1) {};
+    TSOThread() : partial_buffer_flush(-1) {}
     /* The TSO store buffer of this thread. Newer entries are further
      * to the back.
      */

@@ -37,8 +37,10 @@ namespace {
     heap_int &operator=(const heap_int &i) { *p = *i.p; return *this; }
     heap_int &operator=(int i) { *p = i; return *this; }
     ~heap_int() {
-      if(!p) BOOST_TEST_ERROR("Double free!");
-      else delete(std::exchange(p, nullptr));
+      if (!p)
+        BOOST_TEST_ERROR("Double free!");
+      else
+        delete(std::exchange(p, nullptr));
     }
     operator int() const { return *p; }
   private:
@@ -71,7 +73,7 @@ namespace {
   };
 
   typedef gen::map<heap_int,heap_int,constant_hash> id_hash_map;
-}
+}  // namespace
 
 namespace std {
   template <> struct hash<heap_int> {
@@ -81,7 +83,7 @@ namespace std {
       return std::hash<int>()(i);
     }
   };
-}
+}  // namespace std
 
 /* Workaround broken boost version */
 #if BOOST_VERSION < 106700 // 1.67

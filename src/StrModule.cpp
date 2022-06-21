@@ -47,6 +47,7 @@
 #endif
 #include <llvm/Pass.h>
 
+#include <memory>
 #include <stdexcept>
 
 namespace StrModule {
@@ -189,5 +190,5 @@ namespace StrModule {
 #endif
     return s;
   }
-}
+}  // namespace StrModule
 

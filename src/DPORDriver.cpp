@@ -33,10 +33,11 @@
 #include "RFSCUnfoldingTree.h"
 #include "Cpubind.h"
 
-#include <fstream>
-#include <stdexcept>
-#include <iomanip>
 #include <cfloat>
+#include <fstream>
+#include <iomanip>
+#include <queue>
+#include <stdexcept>
 #include <thread>
 
 #include <llvm/IRReader/IRReader.h>
@@ -82,7 +83,7 @@ namespace {
       cv.notify_one();
     }
   };
-}
+}  // namespace
 
 DPORDriver::DPORDriver(const Configuration &C) :
   conf(C) {
@@ -293,7 +294,7 @@ bool DPORDriver::handle_trace(TraceBuilder *TB, Trace *t, uint64_t *computation_
 }
 
 
-namespace{
+namespace {
   std::unique_ptr<RFSCScheduler> make_scheduler(const Configuration &conf) {
     switch (conf.exploration_scheduler) {
     case Configuration::PRIOQUEUE:
@@ -304,7 +305,7 @@ namespace{
       abort();
     }
   }
-}
+}  // namespace
 
 DPORDriver::Result DPORDriver::run_rfsc_sequential() {
   Result res;
@@ -326,12 +327,11 @@ DPORDriver::Result DPORDriver::run_rfsc_sequential() {
 
     bool assume_blocked = false;
     TB.reset();
-    Trace *t= this->run_once(TB, mod.get(), assume_blocked);
+    Trace *t = this->run_once(TB, mod.get(), assume_blocked);
     TB.compute_prefixes();
     tasks_left--;
 
     int to_create = TB.tasks_created;
-
 
     tasks_left += to_create;
 
@@ -342,7 +342,6 @@ DPORDriver::Result DPORDriver::run_rfsc_sequential() {
       estimate = std::round(TB.estimate_trace_count());
     }
     clear_memory_use(computation_count+1, context, mod);
-
   } while(tasks_left);
 
   if(conf.print_progress){
