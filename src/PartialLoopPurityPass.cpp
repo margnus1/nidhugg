@@ -558,8 +558,8 @@ namespace {
     bool is_false() const { return disjuncts.empty(); }
     auto begin() const { return disjuncts.begin(); }
     auto end() const { return disjuncts.end(); }
-    bool operator!=(const Disjunction &other) { return !(*this == other); }
-    bool operator==(const Disjunction &other) {
+    bool operator!=(const Disjunction &othr) const { return !(*this == othr); }
+    bool operator==(const Disjunction &other) const {
       return disjuncts == other.disjuncts;
     }
     bool operator<(const Disjunction &other) const {
@@ -581,12 +581,19 @@ namespace {
       }
       return found_smaller;
     }
+    bool operator<=(const Disjunction &other) const {
+      return *this == other || *this < other;
+    }
 
     Disjunction operator|(const Disjunction &other) const {
       Disjunction res = *this;
       res.addConds(other.disjuncts);
       res.bound();
       return res;
+    }
+
+    Disjunction &operator|=(const Disjunction &other) {
+      return *this = (*this | other);
     }
 
     Disjunction operator&(const Disjunction &other) const {
@@ -991,8 +998,9 @@ namespace {
         }
       }
     }
-    return BinaryPredicate(llvm::CmpInst::ICMP_EQ, cond,
-                           llvm::ConstantInt::getTrue(cond->getContext()));
+    return collapseTautologies
+      (BinaryPredicate(llvm::CmpInst::ICMP_EQ, cond,
+                       llvm::ConstantInt::getTrue(cond->getContext())));
   }
 
   PurityCondition computeOut(const llvm::Loop *L, PurityConditions &conds,
@@ -1008,7 +1016,6 @@ namespace {
         // purity; if not, the condition should just be false. That way,
         // we won't waste good conditions in the overapproximations
         BinaryPredicate brCond = getBranchCondition(branch->getCondition());
-        brCond = collapseTautologies(brCond);
         if (!L->contains(trueSucc)) {
           assert(trueIn.is_false());
           if (falseIn.is_true()) return brCond.negate();
@@ -1370,6 +1377,31 @@ namespace {
     return IPT.earliest;
   }
 
+  /* Compute path conditions to all blocks in the loop, i.e. conditions
+   * that must hold if we are in that block. */
+  auto getPathConds(llvm::Loop *L, const RPO &rpo) {
+    std::map<const llvm::BasicBlock*, PurityCondition> ret;
+    for (const llvm::BasicBlock *BB : rpo.blocks) {
+      PurityCondition &BBImp = ret[BB];
+      if (BB == L->getHeader()) continue;
+      BBImp = true;
+      for (const llvm::BasicBlock *Pred : llvm::predecessors(BB)) {
+        /* Note: gets false for backedges */
+        PurityCondition PredImp = ret[Pred];
+        if (const llvm::BranchInst *Br = llvm::dyn_cast<llvm::BranchInst>
+            (Pred->getTerminator())) {
+          if (Br->isConditional()) {
+            BinaryPredicate BrCond = getBranchCondition(Br->getCondition());
+            if (BB != Br->getSuccessor(0)) BrCond = BrCond.negate();
+            PredImp |= BrCond;
+          }
+        }
+        BBImp &= PredImp;
+      }
+    }
+    return ret;
+  }
+
   llvm::Value *constantZeroValue(llvm::Type *T) {
     return llvm::Constant::getNullValue(T);
     abort();
@@ -1444,6 +1476,7 @@ namespace {
       // llvm::dbgs() << " Purity condition: " << headerCond << "\n";
     }
 
+    auto pathConds = getPathConds(L, *LoopRPO);
     for (const ConjunctionLoc &conj : headerCond) {
       llvm::Instruction *I = findInsertionPoint(L, conj);
       if (!I) {
@@ -1452,23 +1485,21 @@ namespace {
       }
       //llvm::dbgs() << " Insertion point: " << *I << "\n";
       llvm::Value *Cond = nullptr;
-      if (!conj.has_conjuncts()) {
-        Cond = llvm::ConstantInt::getTrue(L->getHeader()->getContext());
-      } else {
-        for (const BinaryPredicate &term : conj) {
-          llvm::Value *LHS = bringDown(term.lhs, I->getParent(), *LoopRPO, *DominatorTree);
-          llvm::Value *RHS = bringDown(term.rhs, I->getParent(), *LoopRPO, *DominatorTree);
-          llvm::Value *TermCond = llvm::ICmpInst::Create
-            (getPredicateOpcode(term.op),
-             llvm::CmpInst::getInversePredicate(term.op),
-             LHS, RHS, "pp.term.negated", I);
-          if (!Cond) Cond = TermCond;
-          else
-            Cond = llvm::BinaryOperator::Create
-              (llvm::BinaryOperator::BinaryOps::Or, Cond, TermCond,
-               "pp.conj.negated", I);
-        }
+      for (const BinaryPredicate &term : conj) {
+        if (PurityCondition(term) <= pathConds.at(I->getParent())) continue;
+        llvm::Value *LHS = bringDown(term.lhs, I->getParent(), *LoopRPO, *DominatorTree);
+        llvm::Value *RHS = bringDown(term.rhs, I->getParent(), *LoopRPO, *DominatorTree);
+        llvm::Value *TermCond = llvm::ICmpInst::Create
+          (getPredicateOpcode(term.op),
+           llvm::CmpInst::getInversePredicate(term.op),
+           LHS, RHS, "pp.term.negated", I);
+        if (!Cond) Cond = TermCond;
+        else
+          Cond = llvm::BinaryOperator::Create
+            (llvm::BinaryOperator::BinaryOps::Or, Cond, TermCond,
+             "pp.conj.negated", I);
       }
+      if (!Cond) Cond = llvm::ConstantInt::getTrue(L->getHeader()->getContext());
       llvm::Function *F_assume = L->getHeader()->getParent()->getParent()
         ->getFunction("__VERIFIER_assume");
       {
