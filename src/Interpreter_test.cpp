@@ -31,13 +31,13 @@
 
 BOOST_AUTO_TEST_SUITE(Interpreter_test)
 
-enum MM {
-  SC,
-  TSO,
-  PSO,
-  RFSC,
-  POWER,
-};
+#if LLVM_VERSION_MAJOR < 16
+#define MM_COMMA_LST SC, TSO, PSO, RFSC, POWER
+#else
+#define MM_COMMA_LST SC, TSO, PSO, RFSC
+#endif
+
+enum MM { MM_COMMA_LST };
 
 Configuration get_conf(MM mm) {
   switch(mm) {
@@ -49,7 +49,9 @@ Configuration get_conf(MM mm) {
     c.dpor_algorithm = Configuration::READS_FROM;
     return c;
   }
+#if LLVM_VERSION_MAJOR < 16
   case POWER: return DPORDriver_test::get_power_conf();
+#endif
   default: abort();
   }
 }
@@ -90,6 +92,16 @@ TEST_ERROR2(Pthread_create_tid_badaddr,
 //             "call i32 @pthread_create(i32* null, i32* null, "
 //             BADADDRT("i8*(i8*)*") ", i8* null)",
 //             R"(declare i32 @pthread_create(i32*, i32*, i8*(i8*)*, i8*))")
+#if LLVM_VERSION_MAJOR >= 16
+TEST_ERROR2(Pthread_join_ret_badaddr,
+            R"(%tidp = alloca i8*
+               call i32 @pthread_create(ptr %tidp, ptr null, ptr @p1, ptr null)
+               %tid = load i64, i8** %tidp
+               call i32 @pthread_join(i64 %tid, )" BADADDRT("ptr") ")",
+            R"(define ptr @p1(ptr){ ret ptr null }
+               declare i32 @pthread_create(ptr, ptr, ptr, ptr)
+               declare i32 @pthread_join(i64, ptr))")
+#else
 TEST_ERROR2(Pthread_join_ret_badaddr,
             R"(%tidp = alloca i8*
                call i32 @pthread_create(i8** %tidp, i32* null, i8*(i8*)* @p1, i8* null)
@@ -98,6 +110,7 @@ TEST_ERROR2(Pthread_join_ret_badaddr,
             R"(define i8* @p1(i8*){ ret i8* null }
                declare i32 @pthread_create(i8**, i32*, i8*(i8*)*, i8*)
                declare i32 @pthread_join(i8*, i8**))")
+#endif
 TEST_ERROR2(Pthread_mutex_init_mtx_badaddr,
             "call i32 @pthread_mutex_init(" BADADDR ", i32* null)",
             "declare i32 @pthread_mutex_init(i32*, i32*)")
@@ -150,7 +163,7 @@ TEST_ERROR2(Atexit_fptr_nullptr,
 //             R"(declare i32 @atexit(void()*))")
 
 BOOST_AUTO_TEST_CASE(Global_ctor_test){
-  for (MM mm : { SC, TSO, PSO, RFSC, POWER }) {
+  for (MM mm : { MM_COMMA_LST }) {
     BOOST_TEST_CHECKPOINT( "mm=" << mm );
     Configuration conf = get_conf(mm);
     std::unique_ptr<DPORDriver> driver(DPORDriver::parseIR(StrModule::portasm(R"(
@@ -179,7 +192,7 @@ declare void @__assert_fail()
 }
 
 BOOST_AUTO_TEST_CASE(Global_dtor_test){
-  for (MM mm : { SC, TSO, PSO, RFSC, POWER }) {
+  for (MM mm : { MM_COMMA_LST }) {
     BOOST_TEST_CHECKPOINT( "mm=" << mm );
     Configuration conf = get_conf(mm);
     std::unique_ptr<DPORDriver> driver(DPORDriver::parseIR(StrModule::portasm(R"(
@@ -208,7 +221,7 @@ declare void @__assert_fail()
 }
 
 BOOST_AUTO_TEST_CASE(Global_ctor_block_no_main_dtor){
-  for (MM mm : { SC, TSO, PSO, RFSC, POWER }) {
+  for (MM mm : { MM_COMMA_LST }) {
     BOOST_TEST_CHECKPOINT( "mm=" << mm );
     Configuration conf = get_conf(mm);
     std::unique_ptr<DPORDriver> driver(DPORDriver::parseIR(StrModule::portasm(R"(
@@ -245,7 +258,7 @@ declare void @__assert_fail()
 }
 
 BOOST_AUTO_TEST_CASE(Main_block_no_global_dtor){
-  for (MM mm : { SC, TSO, PSO, RFSC, POWER }) {
+  for (MM mm : { MM_COMMA_LST }) {
     BOOST_TEST_CHECKPOINT( "mm=" << mm );
     Configuration conf = get_conf(mm);
     std::unique_ptr<DPORDriver> driver(DPORDriver::parseIR(StrModule::portasm(R"(
