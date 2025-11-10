@@ -43,8 +43,12 @@ namespace {
     size_t old_size;
     do {
       old_size = use.size();
+#if LLVM_VERSION_MAJOR >= 16
+      for (auto BBI = std::prev(F.end()); ; --BBI) {
+#else
       auto &BBL = F.getBasicBlockList();
       for (auto BBI = BBL.rbegin(); BBI != BBL.rend(); ++BBI) {
+#endif
         assert(BBI->rbegin()->isTerminator());
         assert(unsafeToDelete(*BBI->rbegin()));
         for (auto it = BBI->rbegin(); it != BBI->rend(); ++it) {
@@ -53,6 +57,9 @@ namespace {
             use.insert(I.op_begin(), I.op_end());
           }
         }
+#if LLVM_VERSION_MAJOR >= 16
+        if (BBI == F.begin()) break;
+#endif
       }
     } while(use.size() != old_size);
     return use;
@@ -63,8 +70,12 @@ bool DeadCodeElimPass::runOnFunction(llvm::Function &F) {
   size_t deleted = 0;
   UseSet use = computeUseSets(F);
 
+#if LLVM_VERSION_MAJOR >= 16
+  for (auto BBI = std::prev(F.end()); ; --BBI) {
+#else
   auto &BBL = F.getBasicBlockList();
   for (auto BBI = BBL.rbegin(); BBI != BBL.rend(); ++BBI) {
+#endif
     for (auto it = BBI->end(); it != BBI->begin();) {
       llvm::Instruction &I = *--it;
       if (!(unsafeToDelete(I) || use.count(&I))) {
@@ -72,6 +83,9 @@ bool DeadCodeElimPass::runOnFunction(llvm::Function &F) {
         ++deleted;
       }
     }
+#if LLVM_VERSION_MAJOR >= 16
+    if (BBI == F.begin()) break;
+#endif
   }
 
   return deleted != 0;
