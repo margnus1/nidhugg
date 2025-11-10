@@ -20,6 +20,9 @@ if [ -n "$LLVM_VERSION" ]; then
         11.*|12.*|13.*)
             LLVM_UBUNTU_VER=20.04
             ;;
+        16.0.[2-4])
+            LLVM_UBUNTU_VER=22.04
+            ;;
         ?*)
             echo "Error: LLVM versions 16.* and higher are not yet supported by Nidhugg"
             exit 1
