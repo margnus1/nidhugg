@@ -31,10 +31,10 @@
 #include <llvm/Support/SourceMgr.h>
 
 #include <memory>
+#include <regex>
 #include <stdexcept>
 
 #include "GlobalContext.h"
-#include "nregex.h"
 
 namespace StrModule {
 
@@ -94,7 +94,18 @@ namespace StrModule {
   }
 
   std::string portasm(std::string s){
+    /* Implement a generic syntax for pointer types
+     * "//ptr:i8* //" expands to "i8* " on older LLVMs and "ptr" on newer
+     */
+    {
+      std::regex regex("//ptr:(.*?)//");
+      s = std::regex_replace(s, regex,
+#if LLVM_VERSION_MAJOR >= 16
+                              "ptr");
+#else
+                              "$1");
+#endif
+    }
     return s;
   }
 }  // namespace StrModule
-

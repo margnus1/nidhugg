@@ -60,7 +60,8 @@ void do_test_error(const char *module, const std::initializer_list<MM> mms) {
   for (MM mm : mms) {
     BOOST_TEST_CHECKPOINT( "mm=" << mm );
     Configuration conf = get_conf(mm);
-    std::unique_ptr<DPORDriver> driver(DPORDriver::parseIR(module, conf));
+    std::unique_ptr<DPORDriver> driver
+      (DPORDriver::parseIR(StrModule::portasm(module), conf));
     DPORDriver::Result res = driver->run();
     BOOST_CHECK(res.trace_count == 1);
     BOOST_CHECK(res.has_errors());
@@ -92,25 +93,14 @@ TEST_ERROR2(Pthread_create_tid_badaddr,
 //             "call i32 @pthread_create(i32* null, i32* null, "
 //             BADADDRT("i8*(i8*)*") ", i8* null)",
 //             R"(declare i32 @pthread_create(i32*, i32*, i8*(i8*)*, i8*))")
-#if LLVM_VERSION_MAJOR >= 16
 TEST_ERROR2(Pthread_join_ret_badaddr,
             R"(%tidp = alloca i8*
-               call i32 @pthread_create(ptr %tidp, ptr null, ptr @p1, ptr null)
-               %tid = load i64, i8** %tidp
-               call i32 @pthread_join(i64 %tid, )" BADADDRT("ptr") ")",
-            R"(define ptr @p1(ptr){ ret ptr null }
-               declare i32 @pthread_create(ptr, ptr, ptr, ptr)
-               declare i32 @pthread_join(i64, ptr))")
-#else
-TEST_ERROR2(Pthread_join_ret_badaddr,
-            R"(%tidp = alloca i8*
-               call i32 @pthread_create(i8** %tidp, i32* null, i8*(i8*)* @p1, i8* null)
-               %tid = load i8*, i8** %tidp
-               call i32 @pthread_join(i8* %tid, )" BADADDRT("i8**") ")",
-            R"(define i8* @p1(i8*){ ret i8* null }
-               declare i32 @pthread_create(i8**, i32*, i8*(i8*)*, i8*)
-               declare i32 @pthread_join(i8*, i8**))")
-#endif
+               call i32 @pthread_create(//ptr:i8**// %tidp, //ptr:i32*// null, //ptr:i8*(i8*)*// @p1, //ptr:i8*// null)
+               %tid = load //ptr:i8*//, i8** %tidp
+               call i32 @pthread_join(//ptr:i8*// %tid, )" BADADDRT("//ptr:i8**//") ")",
+            R"(define //ptr:i8*// @p1(//ptr:i8*//){ ret //ptr:i8*// null }
+               declare i32 @pthread_create(//ptr:i8**//, //ptr:i32*//, //ptr:i8*(i8*)*//, //ptr:i8*//)
+               declare i32 @pthread_join(//ptr:i8*//, //ptr:i8**//))")
 TEST_ERROR2(Pthread_mutex_init_mtx_badaddr,
             "call i32 @pthread_mutex_init(" BADADDR ", i32* null)",
             "declare i32 @pthread_mutex_init(i32*, i32*)")
