@@ -24,7 +24,6 @@ libnidhugg_a_SOURCES = \
   LLVMUtils.cpp LLVMUtils.h \
   LoopBoundPass.cpp LoopBoundPass.h \
   MRef.cpp MRef.h \
-  nregex.cpp nregex.h \
   Option.h \
   PartialLoopPurityPass.h PartialLoopPurityPass.cpp \
   POWERExecution.cpp \
@@ -78,7 +77,6 @@ unittest_SOURCES = \
   GenMap_test.cpp \
   GenVector_test.cpp \
   Interpreter_test.cpp \
-  nregex_test.cpp \
   Observers_test.cpp \
   POWER_test.cpp \
   POWER_test2.cpp \
