@@ -23,6 +23,7 @@
 #define __MREF_H__
 
 #include <cassert>
+#include <cstdint>
 #include <iterator>
 
 class ConstMRef;
