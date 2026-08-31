@@ -887,6 +887,16 @@ void RFSCTraceBuilder::compute_unfolding() {
       read_from = &prefix[*prefix[i].read_from].event;
     }
 
+    if (prefix[i].sym.kind == SymEv::kind::JOIN) {
+      /* We encode a thread join using the read_from pointer in the
+       * unfolding tree */
+      assert(read_from == &null_ptr);
+      IPid thread = prefix[i].sym.num();
+      assert(!threads[thread].event_indices.empty());
+      unsigned last_index = threads[thread].event_indices.back();
+      read_from = &prefix[last_index].event;
+    }
+
     prefix[i].event = unfolding_tree.find_unfolding_node
       (threads[p].cpid, *parent, *read_from);
 
